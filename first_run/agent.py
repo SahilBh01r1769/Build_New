@@ -20,8 +20,9 @@ def decide_failure(
     """The model selects from known launch routes; it never supplies a command."""
     available = [i for i in range(len(candidates)) if i not in attempted]
     key = os.environ.get("OPENAI_API_KEY")
-    if not available:
-        return Decision("blocked", "No untried launch route remains. " + failure[-600:])
+    if not available and not key:
+        last_line = failure.strip().splitlines()[-1] if failure.strip() else "No further detail was emitted."
+        return Decision("blocked", "No untried launch route remains. Last error: " + last_line[:400])
     if not key:
         return Decision("blocked", "The first launch failed. Set OPENAI_API_KEY to enable bounded recovery, or use the logged command to investigate. " + failure[-600:])
 

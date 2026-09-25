@@ -166,6 +166,7 @@ class MainWindow(QMainWindow):
         self.worker = None
 
     def stop_run(self):
+        was_running = self.address is not None
         if self.thread and self.thread.isRunning() and self.worker:
             self.worker.cancelled.set()
             if self.worker.runner:
@@ -173,11 +174,18 @@ class MainWindow(QMainWindow):
         elif self.process_runner:
             self.process_runner.stop()
         self.stop_button.setEnabled(False)
+        self.open_button.setEnabled(False)
+        self.address = None
+        if was_running:
+            self.state.setText("Stopped")
+            self.current.setText("Application stopped. Use Start again to relaunch it.")
 
     def closeEvent(self, event):
         self.stop_run()
         if self.thread and self.thread.isRunning():
-            self.thread.wait(4000)
+            if not self.thread.wait(4000):
+                event.ignore()
+                return
         super().closeEvent(event)
 
     def source_ready(self, info: ProjectInfo):

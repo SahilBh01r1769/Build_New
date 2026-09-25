@@ -60,11 +60,11 @@ def inspect_project(path: Path) -> ProjectInfo:
             launch = None
         else:
             install = ("npm", "ci") if (path / "package-lock.json").exists() else ("npm", "install")
-            script = next((name for name in ("dev", "start") if name in scripts), None)
+            script = next((name for name in ("dev", "start", "serve") if name in scripts), None)
             launch = ("npm", "run", script) if script else None
         observations.extend([_version("node"), _version("npm")])
         if not launch:
-            observations.append("No supported start script found (dev or start).")
+            observations.append("No supported start script found (dev, start or serve).")
         return ProjectInfo(path, "node", "Node web", install, launch, tuple(observations), needs_env)
 
     requirements = path / "requirements.txt"

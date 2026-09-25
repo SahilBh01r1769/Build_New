@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -127,6 +128,8 @@ class SetupRunner:
     def run(self, reuse: bool = False) -> Outcome:
         if not self.info.launch:
             return Outcome("Blocked", "No supported launch command was found. Select a project entry point manually in a later version.")
+        if self.info.kind == "node" and (not shutil.which("node") or not shutil.which("npm")):
+            return Outcome("Needs input", "Node and npm must be installed on the machine. System runtime installation needs your approval outside First Run.")
         missing = self._environment_values()
         if missing:
             return Outcome("Needs input", "Fill these values in the project's .env file, then try again: " + ", ".join(missing))
@@ -166,7 +169,7 @@ class SetupRunner:
             if result.state == "Running":
                 save_project(self.info.path, routes[start])
             return result
-        decision = decide_failure(result.detail, routes, attempted, self.info.observations)
+        decision = decide_failure(result.detail, routes, attempted.copy(), self.info.observations)
         self.report(f"Recovery: {decision.reason}")
         if decision.action == "needs_input":
             return Outcome("Needs input", decision.reason)
@@ -196,7 +199,7 @@ class SetupRunner:
         elif self.info.kind == "node" and (self.info.path / "package.json").is_file():
             import json
             scripts = json.loads((self.info.path / "package.json").read_text()).get("scripts", {})
-            for name in ("start", "dev"):
+            for name in ("start", "dev", "serve"):
                 route = ("npm", "run", name)
                 if name in scripts and route not in routes:
                     routes.append(route)
@@ -269,5 +272,5 @@ class SetupRunner:
 
     def _ports(self) -> list[str]:
         ports = {"django": (8000,), "fastapi": (8000,), "flask": (5000,),
-                 "streamlit": (8501,), "Node web": (3000, 5173, 8080)}
+                 "streamlit": (8501,), "Node web": (3000, 5173, 8080, 4173)}
         return [f"http://127.0.0.1:{port}/" for port in ports.get(self.info.framework, ())]
