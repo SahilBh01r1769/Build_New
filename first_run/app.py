@@ -5,7 +5,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QWidget,
@@ -56,6 +56,10 @@ class MainWindow(QMainWindow):
         self.worker = None
         self.process_runner = None
         self.address = None
+        self.process_watch = QTimer(self)
+        self.process_watch.setInterval(500)
+        self.process_watch.timeout.connect(self.check_process)
+        self.process_watch.start()
 
         self.source = QLineEdit()
         self.source.setPlaceholderText("Local project folder or public HTTPS Git URL")
@@ -189,6 +193,19 @@ class MainWindow(QMainWindow):
         if was_running:
             self.state.setText("Stopped")
             self.current.setText("Application stopped. Use Start again to relaunch it.")
+
+    def check_process(self):
+        if not self.address or not self.process_runner or not self.process_runner.application:
+            return
+        code = self.process_runner.application.poll()
+        if code is None:
+            return
+        self.process_runner.stop()
+        self.address = None
+        self.state.setText("Blocked")
+        self.current.setText(f"Application exited after responding (exit code {code}). See output for details.")
+        self.open_button.setEnabled(False)
+        self.stop_button.setEnabled(False)
 
     def closeEvent(self, event):
         self.stop_run()

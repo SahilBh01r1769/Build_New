@@ -1,9 +1,11 @@
 import json
 import os
 import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import threading
+import time
 import unittest
 from unittest.mock import patch
 from io import BytesIO
@@ -16,6 +18,57 @@ from first_run.runner import SetupRunner
 
 
 class RunnerTests(unittest.TestCase):
+    def test_existing_local_server_is_not_claimed_as_new_app(self):
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"unrelated")
+
+            def log_message(self, *_):
+                pass
+
+        server = None
+        for port in (3000, 8080, 4173):
+            try:
+                server = HTTPServer(("127.0.0.1", port), Handler)
+                break
+            except OSError:
+                continue
+        if server is None:
+            self.skipTest("All test ports are occupied")
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        try:
+            with TemporaryDirectory() as directory:
+                path = Path(directory)
+                (path / "package.json").write_text(json.dumps({
+                    "name": "occupied-port-test", "version": "1.0.0",
+                    "scripts": {"start": "node server.js"},
+                }))
+                (path / "server.js").write_text(
+                    f"console.log('http://localhost:{port}'); setInterval(()=>{{}}, 1000)"
+                )
+                started = threading.Event()
+                runner = SetupRunner(
+                    inspect_project(path),
+                    lambda line: started.set() if line == "$ npm run start" else None,
+                    threading.Event(),
+                )
+                result = []
+                worker = threading.Thread(target=lambda: result.append(runner.run()))
+                worker.start()
+                self.assertTrue(started.wait(10))
+                time.sleep(1)
+                self.assertFalse(result, "First Run claimed the unrelated server")
+                runner.stop()
+                worker.join(5)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(result[0].state, "Blocked")
+        finally:
+            server.shutdown()
+            server.server_close()
+
     def test_missing_env_value_needs_input_before_install(self):
         with TemporaryDirectory() as directory:
             path = Path(directory)

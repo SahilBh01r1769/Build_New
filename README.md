@@ -33,7 +33,7 @@ Set `OPENAI_API_KEY` in the environment before starting First Run to enable this
 - The project must have a root `requirements.txt`, common `pyproject.toml`, or `package.json`. Entry points in unusual layouts and monorepos are not selected automatically.
 - npm is the supported Node package manager. A pnpm or Yarn lockfile leads to a blocker.
 - A runtime, native dependency, external service, or nonempty credential missing from the machine can still require manual setup. First Run does not install system software or edit application source.
-- HTTP checks use common local ports and URLs printed by the process. Apps requiring a particular health route or login may need manual inspection after launch.
+- HTTP checks use common local ports. Printed URLs on other ports need manual inspection; apps requiring a particular health route or login may also need it.
 - Recovery via the model needs a separately supplied API key. The live model call has not been exercised in the development environment.
 - Desktop and process lifecycle checks have run on Linux; Windows behavior still needs a local run.
 

@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 from urllib.error import URLError, HTTPError
+from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from first_run.inspect import ProjectInfo
@@ -229,7 +230,11 @@ class SetupRunner:
     def _launch_verify(self, launch: tuple[str, ...]) -> Outcome:
         self.output = []
         candidates = self._ports()
-        occupied = {url for url in candidates if self._responds(url)}
+        ports = {urlparse(url).port for url in candidates}
+        occupied = {
+            port for port in ports
+            if any(self._responds(f"http://{host}:{port}/") for host in ("127.0.0.1", "localhost"))
+        }
         self.report("$ " + " ".join(launch))
         self.application = subprocess.Popen(
             launch, cwd=self.info.path, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -259,8 +264,11 @@ class SetupRunner:
                     app.stdout.close()
                 return Outcome("Blocked", "Application exited during startup. " + "\n".join(self.output[-20:])[-1600:])
             found = re.findall(r"https?://(?:localhost|127\.0\.0\.1):\d+", "\n".join(self.output))
+            # A printed URL alone does not establish which process owns that port.
+            # V1 verifies only the ports checked before launching the application.
             for url in dict.fromkeys([*found, *candidates]):
-                if url in occupied:
+                port = urlparse(url).port
+                if port not in ports or port in occupied:
                     continue
                 try:
                     with urlopen(url, timeout=0.7) as response:
