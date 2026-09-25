@@ -10,10 +10,11 @@ from PySide6.QtWidgets import (
 )
 
 from first_run.source import prepare_source
+from first_run.inspect import ProjectInfo, inspect_project
 
 
 class SourceWorker(QObject):
-    finished = Signal(str)
+    finished = Signal(object)
     failed = Signal(str)
 
     def __init__(self, source: str, destination: str):
@@ -23,7 +24,7 @@ class SourceWorker(QObject):
 
     def run(self):
         try:
-            self.finished.emit(str(prepare_source(self.source, self.destination)))
+            self.finished.emit(inspect_project(prepare_source(self.source, self.destination)))
         except (OSError, ValueError, RuntimeError) as exc:
             self.failed.emit(str(exc))
 
@@ -56,10 +57,12 @@ class MainWindow(QMainWindow):
         form.addRow("Project", source_row)
         form.addRow("Clone to", destination_row)
 
-        self.start = QPushButton("Open project")
+        self.start = QPushButton("Inspect project")
         self.start.clicked.connect(self.open_project)
         self.state = QLabel("Ready")
         self.current = QLabel("Choose a local folder or repository URL.")
+        self.plan = QLabel("No plan yet")
+        self.plan.setWordWrap(True)
         self.output = QTextEdit()
         self.output.setReadOnly(True)
 
@@ -69,6 +72,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(QLabel("Current run"))
         layout.addWidget(self.state)
         layout.addWidget(self.current)
+        layout.addWidget(QLabel("Setup plan"))
+        layout.addWidget(self.plan)
         layout.addWidget(QLabel("Output"))
         layout.addWidget(self.output, 1)
         root = QWidget()
@@ -103,10 +108,17 @@ class MainWindow(QMainWindow):
         self.thread.finished.connect(lambda: self.start.setEnabled(True))
         self.thread.start()
 
-    def source_ready(self, path: str):
-        self.state.setText("Project opened")
-        self.current.setText(path)
-        self.output.append(f"Project available at {path}")
+    def source_ready(self, info: ProjectInfo):
+        self.state.setText("Inspected" if info.launch else "Blocked")
+        self.current.setText(f"{info.framework} · {info.path}")
+        if info.launch:
+            steps = ["Create virtual environment"] if info.kind == "python" else []
+            steps.extend(["Install dependencies", "Launch application", "Verify HTTP response"])
+            self.plan.setText(" → ".join(steps))
+            self.output.append(f"Install: {' '.join(info.install)}\nLaunch: {' '.join(info.launch)}")
+        else:
+            self.plan.setText("No safe setup route determined.")
+        self.output.append("\n".join(info.observations))
 
     def source_failed(self, message: str):
         self.state.setText("Blocked")
