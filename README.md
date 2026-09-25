@@ -26,7 +26,7 @@ The UI stays responsive during installation. A run succeeds only while its proce
 
 First Run makes a short list of launch routes from files and package scripts. If the first launch fails, an optional OpenAI decision can select another untried route, identify required user input, or stop with a blocker. The model cannot supply an arbitrary shell command. There is at most one alternative launch attempt in this version.
 
-Set `OPENAI_API_KEY` in the environment before starting First Run to enable this recovery step. `FIRST_RUN_MODEL` can override the default `gpt-5-mini`. The failure excerpt and detected routes are sent to the model for this decision; review application logs before enabling it for projects containing sensitive output. Normal setup and verification do not need an API key.
+Set `OPENAI_API_KEY` in the environment before starting First Run to enable this recovery step. `FIRST_RUN_MODEL` can override the default `gpt-5-mini`. The provider key is removed from the environment passed to Git and project commands. The failure excerpt and detected routes are sent to the model for this decision; review application logs before enabling it for projects containing sensitive output. Normal setup and verification do not need an API key.
 
 ## Current limits
 
@@ -35,5 +35,6 @@ Set `OPENAI_API_KEY` in the environment before starting First Run to enable this
 - A runtime, native dependency, external service, or nonempty credential missing from the machine can still require manual setup. First Run does not install system software or edit application source.
 - HTTP checks use common local ports and URLs printed by the process. Apps requiring a particular health route or login may need manual inspection after launch.
 - Recovery via the model needs a separately supplied API key. The live model call has not been exercised in the development environment.
+- Desktop and process lifecycle checks have run on Linux; Windows behavior still needs a local run.
 
 Run the focused tests with `python -m unittest discover -s tests -v`.

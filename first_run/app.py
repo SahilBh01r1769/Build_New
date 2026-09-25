@@ -22,6 +22,7 @@ class SourceWorker(QObject):
     failed = Signal(str)
     inspected = Signal(object)
     output = Signal(str)
+    step = Signal(str)
 
     def __init__(self, source: str, destination: str, reuse: bool = False):
         super().__init__()
@@ -35,10 +36,15 @@ class SourceWorker(QObject):
         try:
             info = inspect_project(prepare_source(self.source, self.destination, self.cancelled))
             self.inspected.emit(info)
-            self.runner = SetupRunner(info, self.output.emit, self.cancelled)
+            self.runner = SetupRunner(info, self.report, self.cancelled)
             self.finished.emit(self.runner.run(reuse=self.reuse), self.runner)
         except (OSError, ValueError, RuntimeError) as exc:
             self.failed.emit(str(exc))
+
+    def report(self, line: str):
+        if line.startswith("$ "):
+            self.step.emit("Running " + line[2:])
+        self.output.emit(line)
 
 
 class MainWindow(QMainWindow):
@@ -143,11 +149,14 @@ class MainWindow(QMainWindow):
         self.address = None
         self.state.setText("Opening")
         self.current.setText("Resolving project source…")
+        self.plan.setText("Inspecting project…")
+        self.output.clear()
         self.thread = QThread(self)
         self.worker = SourceWorker(self.source.text(), self.destination.text(), reuse)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.inspected.connect(self.source_ready)
+        self.worker.step.connect(self.current.setText)
         self.worker.output.connect(self.output.append)
         self.worker.finished.connect(self.run_finished)
         self.worker.failed.connect(self.source_failed)
@@ -168,6 +177,7 @@ class MainWindow(QMainWindow):
     def stop_run(self):
         was_running = self.address is not None
         if self.thread and self.thread.isRunning() and self.worker:
+            self.state.setText("Stopping")
             self.worker.cancelled.set()
             if self.worker.runner:
                 self.worker.runner.stop()
@@ -202,7 +212,8 @@ class MainWindow(QMainWindow):
 
     def run_finished(self, outcome: Outcome, runner: SetupRunner):
         self.process_runner = runner
-        self.state.setText(outcome.state)
+        stopped = runner.cancelled.is_set() and outcome.state != "Running"
+        self.state.setText("Stopped" if stopped else outcome.state)
         self.current.setText(outcome.detail)
         self.current.setWordWrap(True)
         self.address = outcome.address
@@ -214,7 +225,7 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(bool(outcome.address))
 
     def source_failed(self, message: str):
-        self.state.setText("Blocked")
+        self.state.setText("Stopped" if self.worker and self.worker.cancelled.is_set() else "Blocked")
         self.current.setText(message)
         self.output.append(message)
 

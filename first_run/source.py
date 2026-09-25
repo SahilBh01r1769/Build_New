@@ -29,6 +29,7 @@ def prepare_source(value: str, destination: str = "", cancelled: threading.Event
         process = subprocess.Popen(
             ["git", "clone", "--", value, str(target)], stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, start_new_session=(os.name != "nt"),
+            env={key: val for key, val in os.environ.items() if key not in ("OPENAI_API_KEY", "FIRST_RUN_MODEL")},
         )
         deadline = time.monotonic() + 180
         while True:

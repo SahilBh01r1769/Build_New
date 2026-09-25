@@ -33,13 +33,13 @@ class SetupRunner:
         self.application: subprocess.Popen | None = None
         self.app_reader: threading.Thread | None = None
         self.output: list[str] = []
-        self.last_launch: tuple[str, ...] | None = None
 
     def _command(self, args: tuple[str, ...], timeout: int = 600) -> tuple[int, str]:
         self.report("$ " + " ".join(args))
         process = subprocess.Popen(
             args, cwd=self.info.path, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, errors="replace", start_new_session=(os.name != "nt"),
+            env=self._base_env(),
         )
         self.active = process
         lines: list[str] = []
@@ -60,6 +60,7 @@ class SetupRunner:
                 self._stop(process)
                 reader.join(timeout=2)
                 process.stdout.close()
+                self.active = None
                 return -1, "Cancelled or timed out.\n" + "".join(lines[-30:])
             time.sleep(0.1)
         reader.join(timeout=2)
@@ -103,7 +104,11 @@ class SetupRunner:
         if not example.exists():
             return ()
         if not local.exists():
+            if self.cancelled.is_set():
+                return ()
             content = example.read_text(errors="replace")
+            if self.cancelled.is_set():
+                return ()
             local.write_text(content)
             self.report("Created .env from .env.example")
         values = {}
@@ -111,10 +116,18 @@ class SetupRunner:
             if "=" in line and not line.lstrip().startswith("#"):
                 key, value = line.split("=", 1)
                 values[key.strip()] = value.strip().strip('"\'')
-        return tuple(key for key in self.info.needs_env if not values.get(key) and not os.environ.get(key))
+        child_env = self._base_env()
+        return tuple(key for key in self.info.needs_env if not values.get(key) and not child_env.get(key))
+
+    @staticmethod
+    def _base_env() -> dict[str, str]:
+        env = os.environ.copy()
+        env.pop("OPENAI_API_KEY", None)
+        env.pop("FIRST_RUN_MODEL", None)
+        return env
 
     def _app_env(self) -> dict[str, str]:
-        env = os.environ.copy()
+        env = self._base_env()
         local = self.info.path / ".env"
         if local.is_file():
             for line in local.read_text(errors="replace").splitlines():
@@ -127,6 +140,8 @@ class SetupRunner:
         return env
 
     def run(self, reuse: bool = False) -> Outcome:
+        if self.cancelled.is_set():
+            return Outcome("Blocked", "Run cancelled before setup.")
         if not self.info.launch:
             return Outcome("Blocked", "No supported launch command was found. Select a project entry point manually in a later version.")
         if self.info.kind == "node" and (not shutil.which("node") or not shutil.which("npm")):
@@ -134,11 +149,15 @@ class SetupRunner:
         missing = self._environment_values()
         if missing:
             return Outcome("Needs input", "Fill these values in the project's .env file, then try again: " + ", ".join(missing))
+        if self.cancelled.is_set():
+            return Outcome("Blocked", "Run cancelled before setup.")
 
         if self.info.kind == "python":
             python = self._python()
             created = not python.exists()
             if not python.exists():
+                if self.cancelled.is_set():
+                    return Outcome("Blocked", "Run cancelled before setup.")
                 code, output = self._command((sys.executable, "-m", "venv", ".venv"), 120)
                 if code:
                     return Outcome("Blocked", "Could not create a virtual environment. " + output[-1200:])
@@ -157,6 +176,8 @@ class SetupRunner:
         if previous:
             self.report("Using saved launch route; dependency installation skipped.")
         else:
+            if self.cancelled.is_set():
+                return Outcome("Blocked", "Run cancelled before dependency installation.")
             code, output = self._command(install)
             if code:
                 return Outcome("Blocked", "Dependency installation failed. " + output[-1600:])
@@ -176,7 +197,6 @@ class SetupRunner:
             return Outcome("Needs input", decision.reason)
         if decision.action != "retry_launch":
             return Outcome("Blocked", decision.reason)
-        attempted.add(decision.candidate)
         self.report("Trying another detected entry point after the failed launch.")
         result = self._launch_verify(routes[decision.candidate])
         if result.state == "Running":
@@ -207,7 +227,6 @@ class SetupRunner:
         return routes
 
     def _launch_verify(self, launch: tuple[str, ...]) -> Outcome:
-        self.last_launch = launch
         self.output = []
         candidates = self._ports()
         occupied = {url for url in candidates if self._responds(url)}
