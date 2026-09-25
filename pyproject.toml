@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "first-run"
+version = "0.1.0"
+description = "Get unfamiliar local web projects running"
+requires-python = ">=3.10"
+dependencies = ["PySide6>=6.7,<7"]
+
+[project.scripts]
+first-run = "first_run.app:main"
+
+[tool.setuptools.packages.find]
+include = ["first_run*"]
