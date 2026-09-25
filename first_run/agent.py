@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 import json
 import os
+import re
 from urllib.request import Request, urlopen
 
 
@@ -13,6 +14,18 @@ class Decision:
     candidate: int = -1
 
 
+def failure_summary(failure: str) -> str:
+    """Prefer the exception or failed-operation line over a traceback's closing brace."""
+    lines = [line.strip() for line in failure.splitlines() if line.strip()]
+    for line in reversed(lines):
+        if re.search(r"\b[\w.]*Error:|\b[\w.]*Exception:|Failed to\b", line, re.IGNORECASE):
+            return line[:400]
+    for line in reversed(lines):
+        if line not in ("}", "]", ")") and not line.startswith(("at ", "File ")):
+            return line[:400]
+    return "No further detail was emitted."
+
+
 def decide_failure(
     failure: str, candidates: list[tuple[str, ...]], attempted: set[int],
     observations: tuple[str, ...],
@@ -21,10 +34,9 @@ def decide_failure(
     available = [i for i in range(len(candidates)) if i not in attempted]
     key = os.environ.get("OPENAI_API_KEY")
     if not available and not key:
-        last_line = failure.strip().splitlines()[-1] if failure.strip() else "No further detail was emitted."
-        return Decision("blocked", "No untried launch route remains. Last error: " + last_line[:400])
+        return Decision("blocked", "No untried launch route remains. " + failure_summary(failure))
     if not key:
-        return Decision("needs_input", "The first launch failed. Set OPENAI_API_KEY to assess another detected route, or inspect the logged failure and run the project manually. " + failure.strip().splitlines()[-1][:300])
+        return Decision("needs_input", "The first launch failed. Set OPENAI_API_KEY to assess another detected route, or inspect the logged failure and run the project manually. " + failure_summary(failure))
 
     choices = [{"index": i, "command": list(candidates[i])} for i in available]
     schema = {

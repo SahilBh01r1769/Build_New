@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 from io import BytesIO
 
-from first_run.agent import decide_failure
+from first_run.agent import decide_failure, failure_summary
 from first_run.agent import Decision
 from first_run.history import recent, saved_launch
 from first_run.inspect import inspect_project
@@ -65,6 +65,12 @@ class RunnerTests(unittest.TestCase):
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             decision = decide_failure("Failed", [("npm", "run", "start")], {0}, ())
         self.assertEqual(decision.action, "blocked")
+
+    def test_failure_summary_skips_traceback_closing_lines(self):
+        node = "Application exited.\nFailed to connect to MongoDB: Error: querySrv ECONNREFUSED\n    at QueryReqWrap.onresolve\n  code: 'ECONNREFUSED'\n}"
+        python = "Traceback (most recent call last):\n  File /tmp/main.py, line 12\nNameError: name 'SingletonMeta' is not defined"
+        self.assertIn("MongoDB", failure_summary(node))
+        self.assertIn("NameError", failure_summary(python))
 
     def test_model_cannot_select_unlisted_command(self):
         response = {"output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps({
