@@ -7,25 +7,27 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
+    QApplication, QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from first_run.source import prepare_source
 from first_run.inspect import ProjectInfo, inspect_project
 from first_run.runner import Outcome, SetupRunner
+from first_run.history import recent
 
 
 class SourceWorker(QObject):
-    finished = Signal(object)
+    finished = Signal(object, object)
     failed = Signal(str)
     inspected = Signal(object)
     output = Signal(str)
 
-    def __init__(self, source: str, destination: str):
+    def __init__(self, source: str, destination: str, reuse: bool = False):
         super().__init__()
         self.source = source
         self.destination = destination
+        self.reuse = reuse
         self.cancelled = threading.Event()
         self.runner = None
 
@@ -34,7 +36,7 @@ class SourceWorker(QObject):
             info = inspect_project(prepare_source(self.source, self.destination))
             self.inspected.emit(info)
             self.runner = SetupRunner(info, self.output.emit, self.cancelled)
-            self.finished.emit(self.runner.run())
+            self.finished.emit(self.runner.run(reuse=self.reuse), self.runner)
         except (OSError, ValueError, RuntimeError) as exc:
             self.failed.emit(str(exc))
 
@@ -68,9 +70,18 @@ class MainWindow(QMainWindow):
         form = QFormLayout()
         form.addRow("Project", source_row)
         form.addRow("Clone to", destination_row)
+        self.recent = QComboBox()
+        self.recent.addItem("Previously configured projects", "")
+        for item in recent():
+            self.recent.addItem(item["path"], item["path"])
+        self.recent.currentIndexChanged.connect(self.choose_recent)
+        form.addRow("Recent", self.recent)
 
         self.start = QPushButton("Set up and run")
         self.start.clicked.connect(self.open_project)
+        self.again = QPushButton("Start again")
+        self.again.setEnabled(False)
+        self.again.clicked.connect(lambda: self.open_project(reuse=True))
         self.stop_button = QPushButton("Stop")
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self.stop_run)
@@ -79,6 +90,7 @@ class MainWindow(QMainWindow):
         self.open_button.clicked.connect(lambda: webbrowser.open(self.address) if self.address else None)
         actions = QHBoxLayout()
         actions.addWidget(self.start)
+        actions.addWidget(self.again)
         actions.addWidget(self.stop_button)
         actions.addWidget(self.open_button)
         self.state = QLabel("Ready")
@@ -107,21 +119,32 @@ class MainWindow(QMainWindow):
         if path:
             self.source.setText(path)
 
+    def choose_recent(self):
+        path = self.recent.currentData()
+        self.again.setEnabled(bool(path))
+        if path:
+            self.source.setText(path)
+            self.destination.clear()
+
     def choose_destination(self):
         parent = QFileDialog.getExistingDirectory(self, "Select parent folder")
         if parent:
             name = Path(self.source.text().rstrip("/")).name.removesuffix(".git") or "project"
             self.destination.setText(str(Path(parent) / name))
 
-    def open_project(self):
+    def open_project(self, reuse: bool = False):
+        if self.process_runner:
+            self.process_runner.stop()
+            self.process_runner = None
         self.start.setEnabled(False)
+        self.again.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.open_button.setEnabled(False)
         self.address = None
         self.state.setText("Opening")
         self.current.setText("Resolving project source…")
         self.thread = QThread(self)
-        self.worker = SourceWorker(self.source.text(), self.destination.text())
+        self.worker = SourceWorker(self.source.text(), self.destination.text(), reuse)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.inspected.connect(self.source_ready)
@@ -137,7 +160,10 @@ class MainWindow(QMainWindow):
 
     def thread_finished(self):
         self.start.setEnabled(True)
+        self.again.setEnabled(bool(self.recent.currentData()))
         self.stop_button.setEnabled(self.address is not None)
+        self.thread = None
+        self.worker = None
 
     def stop_run(self):
         if self.thread and self.thread.isRunning() and self.worker:
@@ -166,12 +192,16 @@ class MainWindow(QMainWindow):
             self.plan.setText("No safe setup route determined.")
         self.output.append("\n".join(info.observations))
 
-    def run_finished(self, outcome: Outcome):
-        self.process_runner = self.worker.runner
+    def run_finished(self, outcome: Outcome, runner: SetupRunner):
+        self.process_runner = runner
         self.state.setText(outcome.state)
         self.current.setText(outcome.detail)
         self.current.setWordWrap(True)
         self.address = outcome.address
+        if outcome.address and not any(self.recent.itemData(i) == str(runner.info.path) for i in range(self.recent.count())):
+            self.recent.addItem(str(runner.info.path), str(runner.info.path))
+        if outcome.address:
+            self.recent.setCurrentIndex(self.recent.findData(str(runner.info.path)))
         self.open_button.setEnabled(bool(outcome.address))
         self.stop_button.setEnabled(bool(outcome.address))
 
