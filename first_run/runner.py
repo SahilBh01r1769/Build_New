@@ -76,7 +76,8 @@ class SetupRunner:
             import signal
             os.killpg(process.pid, signal.SIGTERM)
         else:
-            process.terminate()
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                           capture_output=True, check=False)
         try:
             process.wait(timeout=3)
         except subprocess.TimeoutExpired:

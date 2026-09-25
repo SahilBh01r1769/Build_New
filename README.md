@@ -6,7 +6,7 @@ It is aimed at ordinary small web projects, not arbitrary repositories. **Blocke
 
 ## Use it
 
-Python 3.10 or newer, Git (for URLs), and the relevant Python or Node runtime must already be installed.
+Python 3.11 or newer, Git (for URLs), and the relevant Python or Node runtime must already be installed.
 
 ```bash
 python -m venv .venv

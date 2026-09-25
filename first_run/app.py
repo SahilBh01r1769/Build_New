@@ -33,7 +33,7 @@ class SourceWorker(QObject):
 
     def run(self):
         try:
-            info = inspect_project(prepare_source(self.source, self.destination))
+            info = inspect_project(prepare_source(self.source, self.destination, self.cancelled))
             self.inspected.emit(info)
             self.runner = SetupRunner(info, self.output.emit, self.cancelled)
             self.finished.emit(self.runner.run(reuse=self.reuse), self.runner)

@@ -24,7 +24,7 @@ def decide_failure(
         last_line = failure.strip().splitlines()[-1] if failure.strip() else "No further detail was emitted."
         return Decision("blocked", "No untried launch route remains. Last error: " + last_line[:400])
     if not key:
-        return Decision("blocked", "The first launch failed. Set OPENAI_API_KEY to enable bounded recovery, or use the logged command to investigate. " + failure[-600:])
+        return Decision("needs_input", "The first launch failed. Set OPENAI_API_KEY to assess another detected route, or inspect the logged failure and run the project manually. " + failure.strip().splitlines()[-1][:300])
 
     choices = [{"index": i, "command": list(candidates[i])} for i in available]
     schema = {
