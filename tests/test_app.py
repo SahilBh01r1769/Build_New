@@ -13,7 +13,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QLineEdit
 
-from first_run.app import MainWindow
+from first_run.agent import Decision
+from first_run.app import KeyCheckWorker, MainWindow
 
 
 class WindowTests(unittest.TestCase):
@@ -53,6 +54,24 @@ class WindowTests(unittest.TestCase):
         finally:
             window.process_watch.stop()
             window.close()
+
+    def test_key_check_reports_model_response_and_auth_fallback(self):
+        worker = KeyCheckWorker("private-test-key")
+        results = []
+        worker.finished.connect(lambda success, message: results.append((success, message)))
+        with patch("first_run.app.decide_failure", return_value=Decision(
+            "blocked", "Sample blocker", source="AI",
+        )) as decide:
+            worker.run()
+        self.assertEqual(results[-1][0], True)
+        self.assertEqual(decide.call_args.kwargs["api_key"], "private-test-key")
+        with patch("first_run.app.decide_failure", return_value=Decision(
+            "blocked", "OpenAI request failed (HTTP 401)", source="fallback",
+        )):
+            worker.run()
+        self.assertEqual(results[-1][0], False)
+        self.assertIn("HTTP 401", results[-1][1])
+        self.assertNotIn("private-test-key", str(results))
 
     def test_running_status_clears_when_process_exits(self):
         window = MainWindow()

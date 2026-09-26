@@ -1,5 +1,6 @@
 """Small task-oriented desktop shell for a First Run session."""
 
+import os
 import sys
 import threading
 import webbrowser
@@ -16,6 +17,7 @@ from first_run.source import prepare_source
 from first_run.inspect import ProjectInfo, inspect_project
 from first_run.runner import Outcome, SetupRunner
 from first_run.history import recent
+from first_run.agent import decide_failure
 
 
 class SourceWorker(QObject):
@@ -54,6 +56,28 @@ class RunReporter(QObject):
         self.output.emit(line)
 
 
+class KeyCheckWorker(QObject):
+    finished = Signal(bool, str)
+
+    def __init__(self, key: str):
+        super().__init__()
+        self.key = key
+
+    def run(self):
+        try:
+            decision = decide_failure(
+                "Connection check: a sample setup has no launch route.", [], set(),
+                ("No project files or logs are included in this check.",), api_key=self.key,
+            )
+        except Exception as exc:
+            self.finished.emit(False, f"AI connection check failed ({type(exc).__name__}).")
+            return
+        if decision.source == "AI":
+            self.finished.emit(True, "AI connection works. Recovery decisions can use this key.")
+        else:
+            self.finished.emit(False, "AI connection failed: " + decision.reason)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -61,6 +85,8 @@ class MainWindow(QMainWindow):
         self.resize(760, 560)
         self.thread = None
         self.worker = None
+        self.key_thread = None
+        self.key_worker = None
         self.process_runner = None
         self.address = None
         self.project_path = None
@@ -103,7 +129,12 @@ class MainWindow(QMainWindow):
         self.api_key = QLineEdit()
         self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
         self.api_key.setPlaceholderText("Optional; used only to diagnose a failed setup")
-        form.addRow("OpenAI key", self.api_key)
+        self.check_key_button = QPushButton("Test key")
+        self.check_key_button.clicked.connect(self.test_key)
+        key_row = QHBoxLayout()
+        key_row.addWidget(self.api_key)
+        key_row.addWidget(self.check_key_button)
+        form.addRow("OpenAI key", key_row)
 
         self.start = QPushButton("Set up and run")
         self.start.clicked.connect(lambda: self.open_project(reuse=self.start.text() == "Continue setup"))
@@ -176,6 +207,32 @@ class MainWindow(QMainWindow):
         if self.project_path:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.project_path)))
 
+    def test_key(self):
+        key = self.api_key.text().strip() or os.environ.get("OPENAI_API_KEY", "")
+        if not key:
+            self.output.append("Enter an OpenAI API key to test the connection.")
+            return
+        self.check_key_button.setEnabled(False)
+        self.output.append("Checking AI connection; no project files or logs are sent…")
+        self.key_thread = QThread(self)
+        self.key_worker = KeyCheckWorker(key)
+        self.key_worker.moveToThread(self.key_thread)
+        self.key_thread.started.connect(self.key_worker.run)
+        self.key_worker.finished.connect(self.key_check_finished)
+        self.key_worker.finished.connect(self.key_thread.quit)
+        self.key_thread.finished.connect(self.key_worker.deleteLater)
+        self.key_thread.finished.connect(self.key_thread.deleteLater)
+        self.key_thread.finished.connect(self.key_thread_finished)
+        self.key_thread.start()
+
+    def key_check_finished(self, success: bool, message: str):
+        self.output.append(message)
+
+    def key_thread_finished(self):
+        self.check_key_button.setEnabled(True)
+        self.key_thread = None
+        self.key_worker = None
+
     def open_project(self, reuse: bool = False):
         if self.process_runner:
             self.process_runner.stop()
@@ -244,6 +301,10 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(False)
 
     def closeEvent(self, event):
+        if self.key_thread and self.key_thread.isRunning():
+            self.output.append("Please wait for the AI key check to finish before closing.")
+            event.ignore()
+            return
         self.stop_run()
         if self.thread and self.thread.isRunning():
             if not self.thread.wait(4000):

@@ -9,6 +9,7 @@ import time
 import unittest
 from unittest.mock import patch
 from io import BytesIO
+from urllib.error import HTTPError
 
 from first_run.agent import decide_failure, failure_summary
 from first_run.history import recent, saved_launch
@@ -150,8 +151,20 @@ class RunnerTests(unittest.TestCase):
             decision = decide_failure("Service refused connection", [("npm", "run", "start")], {0},
                                       ("node: available",), api_key="test-key")
         self.assertEqual(decision.action, "needs_input")
+        self.assertEqual(decision.source, "AI")
         sent = json.loads(request.call_args.args[0].data)
         self.assertEqual(json.loads(sent["input"])["available_launch_candidates"], [])
+
+    def test_rejected_api_key_is_visible_and_uses_rules(self):
+        with patch("first_run.agent.urlopen", side_effect=HTTPError(
+            "https://api.openai.com/v1/responses", 401, "Unauthorized", {}, None,
+        )):
+            decision = decide_failure("Application exited", [("npm", "run", "start")], {0}, (),
+                                      api_key="invalid-key")
+        self.assertEqual(decision.action, "blocked")
+        self.assertEqual(decision.source, "fallback")
+        self.assertIn("HTTP 401", decision.reason)
+        self.assertNotIn("invalid-key", decision.reason)
 
     def test_model_can_choose_allowed_transient_install_retry(self):
         response = {"output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps({

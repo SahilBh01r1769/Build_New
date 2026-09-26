@@ -193,7 +193,7 @@ class SetupRunner:
                          f"Install route: {' '.join(self.info.install)}", *self.info.observations)
                 decision = decide_failure(output, [], set(), facts,
                                           phase="install", api_key=self.api_key)
-                self.report(f"Recovery: {decision.reason}")
+                self.report(f"Recovery ({decision.source}): {decision.reason}")
                 if decision.action == "needs_input":
                     return Outcome("Needs input", decision.reason)
                 if decision.action != "retry_install":
@@ -224,7 +224,7 @@ class SetupRunner:
                  f"Attempted launch: {' '.join(self.info.launch)}", *self.info.observations)
         decision = decide_failure(result.detail, routes, attempted.copy(), facts,
                                   api_key=self.api_key)
-        self.report(f"Recovery: {decision.reason}")
+        self.report(f"Recovery ({decision.source}): {decision.reason}")
         if decision.action == "needs_input":
             return Outcome("Needs input", decision.reason)
         if decision.action != "retry_launch":

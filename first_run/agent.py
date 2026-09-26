@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 
@@ -13,6 +14,7 @@ class Decision:
     action: str  # retry_launch, retry_install, needs_input, blocked
     reason: str
     candidate: int = -1
+    source: str = "rules"
 
 
 def failure_summary(failure: str) -> str:
@@ -57,13 +59,15 @@ def decide_failure(
     if transient:
         actions.append("retry_install")
 
-    def fallback(reason: str = "") -> Decision:
+    def fallback(reason: str = "", source: str = "rules") -> Decision:
         detail = failure_summary(failure)
         if transient:
-            return Decision("retry_install", reason + "Retrying the dependency install once after: " + detail)
+            return Decision("retry_install", reason + "Retrying the dependency install once after: " + detail,
+                            source=source)
         if available:
-            return Decision("retry_launch", reason + "Trying another detected entry point after: " + detail, available[0])
-        return Decision("blocked", reason + "No safe recovery action remains. " + detail)
+            return Decision("retry_launch", reason + "Trying another detected entry point after: " + detail,
+                            available[0], source)
+        return Decision("blocked", reason + "No safe recovery action remains. " + detail, source=source)
 
     key = os.environ.get("OPENAI_API_KEY") if api_key is None else api_key
     if not key:
@@ -115,6 +119,10 @@ def decide_failure(
             raise ValueError("Invalid recovery decision")
         if (action == "retry_launch" and candidate not in available) or (action != "retry_launch" and candidate != -1):
             raise ValueError("Invalid recovery candidate")
-        return Decision(action, reason[:400], candidate)
+        return Decision(action, reason[:400], candidate, "AI")
+    except HTTPError as exc:
+        detail = ("check the key and API access" if exc.code in (401, 403)
+                  else "check the model and API access" if exc.code == 404 else "see API status")
+        return fallback(f"OpenAI request failed (HTTP {exc.code}; {detail}); ", "fallback")
     except (OSError, ValueError, KeyError, StopIteration, TypeError) as exc:
-        return fallback(f"Model decision unavailable ({type(exc).__name__}); ")
+        return fallback(f"Model decision unavailable ({type(exc).__name__}); ", "fallback")
