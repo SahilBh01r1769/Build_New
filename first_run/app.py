@@ -23,12 +23,14 @@ class SourceWorker(QObject):
     failed = Signal(str)
     inspected = Signal(object)
 
-    def __init__(self, source: str, destination: str, report, reuse: bool = False):
+    def __init__(self, source: str, destination: str, report, reuse: bool = False,
+                 api_key: str | None = None):
         super().__init__()
         self.source = source
         self.destination = destination
         self.report = report
         self.reuse = reuse
+        self.api_key = api_key
         self.cancelled = threading.Event()
         self.runner = None
 
@@ -36,7 +38,7 @@ class SourceWorker(QObject):
         try:
             info = inspect_project(prepare_source(self.source, self.destination, self.cancelled))
             self.inspected.emit(info)
-            self.runner = SetupRunner(info, self.report, self.cancelled)
+            self.runner = SetupRunner(info, self.report, self.cancelled, api_key=self.api_key)
             self.finished.emit(self.runner.run(reuse=self.reuse), self.runner)
         except (OSError, ValueError, RuntimeError) as exc:
             self.failed.emit(str(exc))
@@ -98,6 +100,10 @@ class MainWindow(QMainWindow):
             self.recent.addItem(item["path"], item["path"])
         self.recent.currentIndexChanged.connect(self.choose_recent)
         form.addRow("Recent", self.recent)
+        self.api_key = QLineEdit()
+        self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_key.setPlaceholderText("Optional; used only to diagnose a failed setup")
+        form.addRow("OpenAI key", self.api_key)
 
         self.start = QPushButton("Set up and run")
         self.start.clicked.connect(lambda: self.open_project(reuse=self.start.text() == "Continue setup"))
@@ -187,7 +193,8 @@ class MainWindow(QMainWindow):
         self.plan.setText("Inspecting project…")
         self.output.clear()
         self.thread = QThread(self)
-        self.worker = SourceWorker(self.source.text(), self.destination.text(), self.reporter.report, reuse)
+        self.worker = SourceWorker(self.source.text(), self.destination.text(), self.reporter.report, reuse,
+                                   api_key=self.api_key.text().strip() or None)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.inspected.connect(self.source_ready)

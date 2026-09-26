@@ -141,6 +141,79 @@ class RunnerTests(unittest.TestCase):
             decision = decide_failure("Failed", [("npm", "run", "start")], {0}, ())
         self.assertEqual(decision.action, "blocked")
 
+    def test_model_can_diagnose_failure_without_another_launch_route(self):
+        response = {"output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps({
+            "action": "needs_input", "reason": "Configure the external service", "candidate": -1,
+        })}]}]}
+        with patch("first_run.agent.urlopen") as request:
+            request.return_value.__enter__.return_value = BytesIO(json.dumps(response).encode())
+            decision = decide_failure("Service refused connection", [("npm", "run", "start")], {0},
+                                      ("node: available",), api_key="test-key")
+        self.assertEqual(decision.action, "needs_input")
+        sent = json.loads(request.call_args.args[0].data)
+        self.assertEqual(json.loads(sent["input"])["available_launch_candidates"], [])
+
+    def test_model_can_choose_allowed_transient_install_retry(self):
+        response = {"output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps({
+            "action": "retry_install", "reason": "Temporary registry timeout", "candidate": -1,
+        })}]}]}
+        with patch("first_run.agent.urlopen") as request:
+            request.return_value.__enter__.return_value = BytesIO(json.dumps(response).encode())
+            decision = decide_failure("npm ERR! ETIMEDOUT", [], set(), (),
+                                      phase="install", api_key="test-key")
+        self.assertEqual(decision.action, "retry_install")
+        sent = json.loads(request.call_args.args[0].data)
+        self.assertEqual(json.loads(sent["input"])["phase"], "install")
+
+    def test_transient_install_failure_retries_once_without_model(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "project"
+            path.mkdir()
+            (path / "package.json").write_text(json.dumps({
+                "name": "network-retry", "version": "1.0.0", "scripts": {"start": "node server.js"},
+            }))
+            with patch("first_run.history.history_path", return_value=Path(directory) / "history.json"):
+                with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+                    runner = SetupRunner(inspect_project(path), lambda _: None, threading.Event())
+                    with patch.object(runner, "_command", side_effect=[(1, "npm ERR! ETIMEDOUT"),
+                                                                       (0, "installed")]) as command:
+                        with patch.object(runner, "_launch_verify", return_value=Outcome("Running", "HTTP 200")):
+                            self.assertEqual(runner.run().state, "Running")
+                    self.assertEqual(command.call_count, 2)
+
+    def test_model_install_recovery_runs_only_the_detected_install_command(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "project"
+            path.mkdir()
+            (path / "package.json").write_text(json.dumps({
+                "name": "model-install", "version": "1.0.0", "scripts": {"start": "node server.js"},
+            }))
+            response = {"output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps({
+                "action": "retry_install", "reason": "Retry registry timeout", "candidate": -1,
+            })}]}]}
+            with patch("first_run.history.history_path", return_value=Path(directory) / "history.json"):
+                with patch("first_run.agent.urlopen") as request:
+                    request.return_value.__enter__.return_value = BytesIO(json.dumps(response).encode())
+                    runner = SetupRunner(inspect_project(path), lambda _: None, threading.Event(),
+                                         api_key="test-key")
+                    with patch.object(runner, "_command", side_effect=[(1, "npm ERR! ETIMEDOUT"),
+                                                                       (0, "installed")]) as command:
+                        with patch.object(runner, "_launch_verify", return_value=Outcome("Running", "HTTP 200")):
+                            self.assertEqual(runner.run().state, "Running")
+                    self.assertEqual(command.call_args_list[0].args[0], command.call_args_list[1].args[0])
+                    self.assertEqual(command.call_count, 2)
+                    self.assertTrue(request.called)
+
+    def test_model_cannot_retry_nontransient_install_error(self):
+        response = {"output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps({
+            "action": "retry_install", "reason": "try again", "candidate": -1,
+        })}]}]}
+        with patch("first_run.agent.urlopen") as request:
+            request.return_value.__enter__.return_value = BytesIO(json.dumps(response).encode())
+            decision = decide_failure("No matching distribution found", [], set(), (),
+                                      phase="install", api_key="test-key")
+        self.assertEqual(decision.action, "blocked")
+
     def test_failure_summary_skips_traceback_closing_lines(self):
         node = "Application exited.\nFailed to connect to MongoDB: Error: querySrv ECONNREFUSED\n    at QueryReqWrap.onresolve\n  code: 'ECONNREFUSED'\n}"
         python = "Traceback (most recent call last):\n  File /tmp/main.py, line 12\nNameError: name 'SingletonMeta' is not defined"
@@ -195,7 +268,8 @@ class RunnerTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             path = Path(directory)
             (path / "package.json").write_text(json.dumps({"scripts": {"start": "node server.js"}}))
-            runner = SetupRunner(inspect_project(path), lambda _: None, threading.Event())
+            runner = SetupRunner(inspect_project(path), lambda _: None, threading.Event(),
+                                 api_key="private-test-value")
             with patch.dict(os.environ, {"OPENAI_API_KEY": "private-test-value"}):
                 code, output = runner._command((sys.executable, "-c", "import os; print(os.getenv('OPENAI_API_KEY', 'absent'))"))
                 self.assertEqual(code, 0)

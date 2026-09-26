@@ -7,12 +7,11 @@ from tempfile import TemporaryDirectory
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLineEdit
 
 from first_run.app import MainWindow
 
@@ -41,6 +40,16 @@ class WindowTests(unittest.TestCase):
             with patch.object(window, "open_project") as open_project:
                 window.start.click()
             open_project.assert_called_once_with(reuse=True)
+        finally:
+            window.process_watch.stop()
+            window.close()
+
+    def test_recovery_key_is_masked_and_not_saved_in_window_history(self):
+        window = MainWindow()
+        try:
+            self.assertEqual(window.api_key.echoMode(), QLineEdit.EchoMode.Password)
+            window.api_key.setText("test-key")
+            self.assertNotIn("test-key", window.output.toPlainText())
         finally:
             window.process_watch.stop()
             window.close()

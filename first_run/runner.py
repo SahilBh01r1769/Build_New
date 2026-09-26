@@ -30,10 +30,11 @@ class Outcome:
 
 
 class SetupRunner:
-    def __init__(self, info: ProjectInfo, report, cancelled: threading.Event):
+    def __init__(self, info: ProjectInfo, report, cancelled: threading.Event, api_key: str | None = None):
         self.info = info
         self.report = report
         self.cancelled = cancelled
+        self.api_key = api_key
         self.active: subprocess.Popen | None = None
         self.application: subprocess.Popen | None = None
         self.app_reader: threading.Thread | None = None
@@ -186,7 +187,20 @@ class SetupRunner:
                 return Outcome("Blocked", "Run cancelled before dependency installation.")
             code, output = self._command(install)
             if code:
-                return Outcome("Blocked", "Dependency installation failed. " + output[-1600:])
+                if self.cancelled.is_set():
+                    return Outcome("Blocked", "Run cancelled during dependency installation.")
+                facts = (f"Detected {self.info.framework} ({self.info.kind})",
+                         f"Install route: {' '.join(self.info.install)}", *self.info.observations)
+                decision = decide_failure(output, [], set(), facts,
+                                          phase="install", api_key=self.api_key)
+                self.report(f"Recovery: {decision.reason}")
+                if decision.action == "needs_input":
+                    return Outcome("Needs input", decision.reason)
+                if decision.action != "retry_install":
+                    return Outcome("Blocked", decision.reason)
+                code, output = self._command(install)
+                if code:
+                    return Outcome("Blocked", "Dependency installation failed again. " + output[-1200:])
             save_install(self.info.path)
         if self.cancelled.is_set():
             return Outcome("Blocked", "Run cancelled.")
@@ -206,7 +220,10 @@ class SetupRunner:
                 if recovered.state == "Running":
                     save_project(self.info.path, launch)
                 return recovered
-        decision = decide_failure(result.detail, routes, attempted.copy(), self.info.observations)
+        facts = (f"Detected {self.info.framework} ({self.info.kind})",
+                 f"Attempted launch: {' '.join(self.info.launch)}", *self.info.observations)
+        decision = decide_failure(result.detail, routes, attempted.copy(), facts,
+                                  api_key=self.api_key)
         self.report(f"Recovery: {decision.reason}")
         if decision.action == "needs_input":
             return Outcome("Needs input", decision.reason)
