@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -15,7 +16,7 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from first_run.inspect import ProjectInfo
-from first_run.agent import decide_failure
+from first_run.agent import decide_failure, observe_failure
 from first_run.history import installed_setup, save_install, save_project, saved_launch
 
 
@@ -39,6 +40,7 @@ class SetupRunner:
         self.application: subprocess.Popen | None = None
         self.app_reader: threading.Thread | None = None
         self.output: list[str] = []
+        self.verified_launch: tuple[str, ...] | None = None
 
     def _command(self, args: tuple[str, ...], timeout: int = 600) -> tuple[int, str]:
         self.report("$ " + " ".join(args))
@@ -149,7 +151,11 @@ class SetupRunner:
         if self.cancelled.is_set():
             return Outcome("Blocked", "Run cancelled before setup.")
         if not self.info.launch:
+            if self.info.framework == "Multiple components":
+                return Outcome("Needs input", self.info.observations[0])
             return Outcome("Blocked", "No supported launch route was found. See Output for the detected project facts; this version starts common root Python web entries or npm dev/start/serve scripts.")
+        if self.info.runtime_issue:
+            return Outcome("Needs input", self.info.runtime_issue)
         if self.info.kind == "node" and (not shutil.which("node") or not shutil.which("npm")):
             return Outcome("Needs input", "Node and npm must be installed on the machine. System runtime installation needs your approval outside First Run.")
         missing = self._environment_values()
@@ -177,6 +183,11 @@ class SetupRunner:
             return Outcome("Blocked", "No supported package manager or launch route was found.")
         routes = self._launch_routes(launch)
         previous = saved_launch(self.info.path) if reuse and not (self.info.kind == "python" and created) else None
+        if previous and previous not in routes and self.info.framework in ("fastapi", "flask", "django"):
+            saved_port = self._port_for(previous)
+            if saved_port and 1024 <= saved_port <= 65535 and any(
+                    self._with_port(route, saved_port) == previous for route in routes):
+                routes.append(previous)
         ready = installed_setup(self.info.path, self.info.kind)
         if previous not in routes or not ready:
             previous = None
@@ -189,6 +200,8 @@ class SetupRunner:
             if code:
                 if self.cancelled.is_set():
                     return Outcome("Blocked", "Run cancelled during dependency installation.")
+                observed = observe_failure(output, "install")
+                self.report(f"Observed: {observed.category}: {observed.detail}")
                 facts = (f"Detected {self.info.framework} ({self.info.kind})",
                          f"Install route: {' '.join(self.info.install)}", *self.info.observations)
                 decision = decide_failure(output, [], set(), facts,
@@ -205,35 +218,47 @@ class SetupRunner:
         if self.cancelled.is_set():
             return Outcome("Blocked", "Run cancelled.")
 
-        start = routes.index(previous) if previous else 0
-        attempted = {start}
-        result = self._launch_verify(routes[start])
-        if result.state == "Running" or self.cancelled.is_set():
+        index = routes.index(previous) if previous else 0
+        attempted: set[int] = set()
+        migrations_checked = False
+        # Each route is tried once; the final decision may still explain a blocker.
+        for attempt_no in range(min(len(routes), 5)):
+            attempted.add(index)
+            result = self._launch_verify(routes[index])
             if result.state == "Running":
-                save_project(self.info.path, routes[start])
-            return result
-        failure_output = "\n".join(self.output).lower()
-        if (self.info.framework == "django" and "unapplied migration" in failure_output
-                and "no such table" in failure_output):
-            recovered = self._recover_django_migrations(launch)
-            if recovered is not None:
-                if recovered.state == "Running":
-                    save_project(self.info.path, launch)
-                return recovered
-        facts = (f"Detected {self.info.framework} ({self.info.kind})",
-                 f"Attempted launch: {' '.join(self.info.launch)}", *self.info.observations)
-        decision = decide_failure(result.detail, routes, attempted.copy(), facts,
-                                  api_key=self.api_key)
-        self.report(f"Recovery ({decision.source}): {decision.reason}")
-        if decision.action == "needs_input":
-            return Outcome("Needs input", decision.reason)
-        if decision.action != "retry_launch":
-            return Outcome("Blocked", decision.reason)
-        self.report("Trying another detected entry point after the failed launch.")
-        result = self._launch_verify(routes[decision.candidate])
-        if result.state == "Running":
-            save_project(self.info.path, routes[decision.candidate])
-        return result
+                save_project(self.info.path, self.verified_launch or routes[index])
+                return result
+            if self.cancelled.is_set():
+                return result
+            failure_output = "\n".join(self.output).lower()
+            if (not migrations_checked and self.info.framework == "django"
+                    and "unapplied migration" in failure_output and "no such table" in failure_output):
+                migrations_checked = True
+                recovered = self._recover_django_migrations(routes[index])
+                if recovered is not None:
+                    if recovered.state == "Running":
+                        save_project(self.info.path, self.verified_launch or routes[index])
+                    return recovered
+            facts = (f"Detected {self.info.framework} ({self.info.kind})",
+                     f"Failed route: {' '.join(routes[index])}",
+                     f"Routes tried: {len(attempted)} of {len(routes)}", *self.info.observations)
+            observed = observe_failure(result.detail)
+            self.report(f"Observed: {observed.category}: {observed.detail}")
+            decision = decide_failure(result.detail, routes, attempted.copy(), facts,
+                                      api_key=self.api_key)
+            self.report(f"Recovery ({decision.source}): {decision.reason}")
+            if decision.action == "needs_input":
+                return Outcome("Needs input", decision.reason)
+            if decision.action != "retry_launch":
+                return Outcome("Blocked", decision.reason)
+            # Validate again at the execution boundary, including mocked or future deciders.
+            if decision.candidate in attempted or not 0 <= decision.candidate < len(routes):
+                return Outcome("Blocked", "Recovery selected an invalid or previously tried route.")
+            if attempt_no == 4:
+                return Outcome("Blocked", "Recovery attempt limit reached; no further route was started.")
+            index = decision.candidate
+            self.report("Trying another detected entry point after the failed launch.")
+        return Outcome("Blocked", "Recovery attempt limit reached; no further route was started.")
 
     def _recover_django_migrations(self, launch: tuple[str, ...]) -> Outcome | None:
         """Migrate only a new SQLite file inside the selected project folder."""
@@ -258,7 +283,7 @@ class SetupRunner:
             return Outcome("Needs input", "Django reports unapplied migrations, but its database is not a fresh "
                            "project-local SQLite file. Review and apply the project's migrations yourself, "
                            "then click Continue setup.")
-        self.report("Recovery: applying Django migrations to a fresh local SQLite database.")
+        self.report("Recovery (rules): applying Django migrations to a fresh local SQLite database.")
         code, output = self._command((launch[0], "manage.py", "migrate", "--noinput"), 120)
         if code:
             return Outcome("Blocked", "Django migrations failed. " + output[-1200:])
@@ -289,13 +314,54 @@ class SetupRunner:
                     routes.append(route)
         return routes
 
+    @staticmethod
+    def _port_in_use(port: int) -> bool:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+                return True
+        except OSError:
+            return False
+
+    def _port_for(self, launch: tuple[str, ...]) -> int | None:
+        defaults = {"fastapi": 8000, "django": 8000, "flask": 5000}
+        port = defaults.get(self.info.framework)
+        if port is None:
+            return None
+        if self.info.framework == "django":
+            match = re.fullmatch(r"127\.0\.0\.1:(\d+)", launch[-1])
+            return int(match[1]) if match else port
+        if "--port" in launch:
+            try:
+                return int(launch[launch.index("--port") + 1])
+            except (IndexError, ValueError):
+                return port
+        return port
+
+    def _with_port(self, launch: tuple[str, ...], port: int) -> tuple[str, ...]:
+        if self.info.framework == "django":
+            return (*launch[:-1], f"127.0.0.1:{port}")
+        if "--port" in launch:
+            index = launch.index("--port") + 1
+            return (*launch[:index], str(port), *launch[index + 1:])
+        return (*launch, "--port", str(port))
+
     def _launch_verify(self, launch: tuple[str, ...]) -> Outcome:
         self.output = []
-        candidates = self._ports()
+        self.verified_launch = None
+        port = self._port_for(launch)
+        if port and self._port_in_use(port):
+            alternative = next((candidate for candidate in range(port + 1, port + 10)
+                                if not self._port_in_use(candidate)), None)
+            if alternative is None:
+                return Outcome("Blocked", f"Port {port} is in use; no nearby free port was found.")
+            self.report(f"Observed: port {port} is in use before launch.")
+            self.report(f"Recovery (rules): port {port} is in use; trying port {alternative}.")
+            launch = self._with_port(launch, alternative)
+        candidates = self._ports(launch)
         ports = {urlparse(url).port for url in candidates}
         occupied = {
             port for port in ports
-            if any(self._responds(f"http://{host}:{port}/") for host in ("127.0.0.1", "localhost"))
+            if self._port_in_use(port)
         }
         self.report("$ " + " ".join(launch))
         self.application = subprocess.Popen(
@@ -337,6 +403,7 @@ class SetupRunner:
                     with urlopen(url, timeout=0.7) as response:
                         status = response.status
                     if 200 <= status < 400 and app.poll() is None:
+                        self.verified_launch = launch
                         return Outcome("Running", f"HTTP {status} from {url}", url)
                     rejected[url] = status
                 except HTTPError as exc:
@@ -366,7 +433,14 @@ class SetupRunner:
         except (OSError, URLError):
             return False
 
-    def _ports(self) -> list[str]:
+    def _ports(self, launch: tuple[str, ...] | None = None) -> list[str]:
         ports = {"django": (8000,), "fastapi": (8000,), "flask": (5000,),
                  "streamlit": (8501,), "Node web": (3000, 5173, 8080, 4173)}
-        return [f"http://127.0.0.1:{port}/" for port in ports.get(self.info.framework, ())]
+        selected = self._port_for(launch) if launch else None
+        numbers = (selected,) if selected else ports.get(self.info.framework, ())
+        roots = [f"http://127.0.0.1:{port}/" for port in numbers]
+        if self.info.framework == "fastapi":
+            return [url for root in roots for url in (root, root + "docs", root + "openapi.json")]
+        if self.info.framework == "streamlit":
+            return [url for root in roots for url in (root, root + "_stcore/health")]
+        return roots

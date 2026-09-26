@@ -17,6 +17,29 @@ class Decision:
     source: str = "rules"
 
 
+@dataclass(frozen=True)
+class FailureObservation:
+    category: str
+    detail: str
+
+
+def observe_failure(failure: str, phase: str = "launch") -> FailureObservation:
+    """Name a few actionable failures; leave unfamiliar output unclassified."""
+    if phase == "install" and _transient_install_failure(failure):
+        category = "installation network error"
+    elif re.search(r"EADDRINUSE|address already in use", failure, re.IGNORECASE):
+        category = "port conflict"
+    elif re.search(r"MongoDB|MongoServerSelectionError|MongooseServerSelectionError", failure, re.IGNORECASE):
+        category = "external service"
+    elif re.search(r"ModuleNotFoundError|Cannot find module|ERR_MODULE_NOT_FOUND", failure):
+        category = "missing dependency or import"
+    elif re.search(r"\b(?:NameError|SyntaxError|ReferenceError):", failure):
+        category = "source error"
+    else:
+        category = "unclear failure"
+    return FailureObservation(category, failure_summary(failure))
+
+
 def failure_summary(failure: str) -> str:
     """Prefer the exception or failed-operation line over a traceback's closing brace."""
     lines = [line.strip() for line in failure.splitlines() if line.strip()]
@@ -98,7 +121,9 @@ def decide_failure(
                 "candidate is -1 unless retry_launch. Keep reason short."
             ),
             "input": json.dumps({
-                "phase": phase, "failure": failure[-1800:], "observations": observations,
+                "phase": phase, "failure": failure[-1800:],
+                "failure_category": observe_failure(failure, phase).category,
+                "observations": observations,
                 "available_launch_candidates": choices,
             }),
             "text": {"format": {"type": "json_schema", "name": "recovery_decision", "strict": True, "schema": schema}},

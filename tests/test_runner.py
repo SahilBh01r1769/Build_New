@@ -7,17 +7,23 @@ from tempfile import TemporaryDirectory
 import threading
 import time
 import unittest
-from unittest.mock import patch
-from io import BytesIO
+from unittest.mock import MagicMock, Mock, patch
+from io import BytesIO, StringIO
 from urllib.error import HTTPError
 
-from first_run.agent import decide_failure, failure_summary
+from first_run.agent import Decision, decide_failure, failure_summary, observe_failure
 from first_run.history import recent, saved_launch
 from first_run.inspect import inspect_project
 from first_run.runner import Outcome, SetupRunner
 
 
 class RunnerTests(unittest.TestCase):
+    def test_failure_categories_do_not_guess_at_unknown_output(self):
+        self.assertEqual(observe_failure("npm ERR! ETIMEDOUT", "install").category,
+                         "installation network error")
+        self.assertEqual(observe_failure("NameError: missing_name").category, "source error")
+        self.assertEqual(observe_failure("something unusual happened").category, "unclear failure")
+
     def test_http_404_is_not_a_verified_running_app(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "project"
@@ -90,6 +96,47 @@ class RunnerTests(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
+
+    def test_occupied_flask_port_uses_free_alternative_and_verifies_it(self):
+        example = Path(__file__).resolve().parents[1] / "examples" / "flask_hello"
+        runner = SetupRunner(inspect_project(example), lambda _: None, threading.Event())
+        app = Mock()
+        app.poll.return_value = None
+        app.stdout = StringIO()
+        response = MagicMock(status=200)
+        response.__enter__.return_value = response
+        with patch.object(runner, "_port_in_use", side_effect=lambda port: port == 5000):
+            with patch("first_run.runner.subprocess.Popen", return_value=app) as start:
+                with patch("first_run.runner.urlopen", return_value=response) as probe:
+                    outcome = runner._launch_verify(("python", "-m", "flask", "--app", "app.py", "run",
+                                                      "--host", "127.0.0.1"))
+        self.assertEqual(outcome.state, "Running")
+        self.assertIn("--port", start.call_args.args[0])
+        self.assertIn("5001", start.call_args.args[0])
+        self.assertEqual(probe.call_args.args[0], "http://127.0.0.1:5001/")
+        self.assertEqual(runner.verified_launch, start.call_args.args[0])
+
+    def test_fastapi_verification_checks_docs_after_missing_root(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / "requirements.txt").write_text("fastapi\nuvicorn\n")
+            (path / "main.py").write_text("app = None\n")
+            runner = SetupRunner(inspect_project(path), lambda _: None, threading.Event())
+            app = Mock()
+            app.poll.return_value = None
+            app.stdout = StringIO()
+            response = MagicMock(status=200)
+            response.__enter__.return_value = response
+            def probe(url, **_):
+                if url.endswith("/"):
+                    raise HTTPError(url, 404, "Not Found", {}, None)
+                return response
+            with patch.object(runner, "_port_in_use", return_value=False):
+                with patch("first_run.runner.subprocess.Popen", return_value=app):
+                    with patch("first_run.runner.urlopen", side_effect=probe):
+                        outcome = runner._launch_verify(("python", "-m", "uvicorn", "main:app"))
+            self.assertEqual(outcome.state, "Running")
+            self.assertEqual(outcome.address, "http://127.0.0.1:8000/docs")
 
     def test_missing_env_value_needs_input_before_install(self):
         with TemporaryDirectory() as directory:
@@ -354,6 +401,49 @@ class RunnerTests(unittest.TestCase):
                         self.assertTrue(any("Trying another detected entry point" in line for line in logs))
                     finally:
                         runner.stop()
+
+    def test_recovery_can_observe_two_failures_before_third_route_succeeds(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "project"
+            path.mkdir()
+            (path / "package.json").write_text(json.dumps({
+                "name": "three-routes", "version": "1.0.0", "scripts": {
+                    "dev": "node broken.js", "start": "node broken.js",
+                    "serve": "node server.js",
+                },
+            }))
+            (path / "broken.js").write_text("console.error('route failed'); process.exit(1)")
+            (path / "server.js").write_text(
+                "require('http').createServer((q,r)=>r.end('ready')).listen(3000,'127.0.0.1')"
+            )
+            with patch("first_run.history.history_path", return_value=Path(directory) / "history.json"):
+                with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+                    logs = []
+                    runner = SetupRunner(inspect_project(path), logs.append, threading.Event())
+                    try:
+                        result = runner.run()
+                        self.assertEqual(result.state, "Running", result.detail)
+                        self.assertEqual(saved_launch(path), ("npm", "run", "serve"))
+                        self.assertEqual(sum(line.startswith("Recovery (") for line in logs), 2)
+                    finally:
+                        runner.stop()
+
+    def test_execution_rejects_a_repeated_model_route(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / "package.json").write_text(json.dumps({
+                "scripts": {"dev": "node broken.js", "start": "node server.js"},
+            }))
+            runner = SetupRunner(inspect_project(path), lambda _: None, threading.Event())
+            with patch.object(runner, "_command", return_value=(0, "installed")):
+                with patch.object(runner, "_launch_verify", return_value=Outcome("Blocked", "failed")) as launch:
+                    with patch("first_run.runner.decide_failure", return_value=Decision(
+                        "retry_launch", "repeat the first route", 0, "AI",
+                    )):
+                        result = runner.run()
+            self.assertEqual(result.state, "Blocked")
+            self.assertIn("previously tried", result.detail)
+            self.assertEqual(launch.call_count, 1)
 
     def test_model_selects_known_start_route_after_real_launch_failure(self):
         with TemporaryDirectory() as directory:
