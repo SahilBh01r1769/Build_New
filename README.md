@@ -10,10 +10,15 @@ It is aimed at ordinary small web projects, not arbitrary repositories. **Blocke
 
 Python 3.11 or newer, Git (for URLs), and the relevant Python or Node runtime must already be installed.
 
+**Windows:** [Download the ZIP](https://github.com/SahilBh01r1769/Build_New/archive/refs/heads/main.zip), extract it where you want the project to live, and double-click `run-windows.cmd`. The first launch creates `.venv` beside the launcher and installs the desktop dependency; later launches reuse it. The Windows `py` launcher must be available. Click **Try example** then **Set up and run** for a small Flask app that needs no Node installation. After it reports **Running**, try **Open app**, **Stop**, and **Start again**.
+
+The launcher and its environment stay in the folder you extracted. Python and pip may still use their normal system temporary and cache folders during installation.
+
+**macOS/Linux or manual installation:**
+
 ```bash
 python -m venv .venv
-# macOS/Linux: source .venv/bin/activate
-# Windows: .venv\Scripts\activate
+source .venv/bin/activate
 python -m pip install -e .
 first-run
 ```

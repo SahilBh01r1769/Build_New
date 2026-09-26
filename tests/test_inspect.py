@@ -8,6 +8,12 @@ from first_run.source import prepare_source
 
 
 class InspectTests(unittest.TestCase):
+    def test_bundled_example_has_a_supported_launch_route(self):
+        example = Path(__file__).resolve().parents[1] / "examples" / "flask_hello"
+        info = inspect_project(example)
+        self.assertEqual(info.framework, "flask")
+        self.assertEqual(info.launch, ("flask", "--app", "app.py", "run", "--host", "127.0.0.1"))
+
     def test_fastapi_requirements_and_entry(self):
         with TemporaryDirectory() as directory:
             path = Path(directory)

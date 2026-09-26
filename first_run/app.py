@@ -75,6 +75,11 @@ class MainWindow(QMainWindow):
         source_row = QHBoxLayout()
         source_row.addWidget(self.source)
         source_row.addWidget(browse)
+        self.example_path = Path(__file__).resolve().parent.parent / "examples" / "flask_hello"
+        if self.example_path.is_dir():
+            example = QPushButton("Try example")
+            example.clicked.connect(self.choose_example)
+            source_row.addWidget(example)
 
         self.destination = QLineEdit()
         self.destination.setPlaceholderText("Folder to create when cloning")
@@ -143,6 +148,10 @@ class MainWindow(QMainWindow):
         path = QFileDialog.getExistingDirectory(self, "Select project folder")
         if path:
             self.source.setText(path)
+
+    def choose_example(self):
+        self.source.setText(str(self.example_path))
+        self.destination.clear()
 
     def choose_recent(self):
         path = self.recent.currentData()

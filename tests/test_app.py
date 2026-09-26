@@ -21,6 +21,18 @@ class WindowTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_example_selection_clears_clone_destination(self):
+        window = MainWindow()
+        try:
+            window.destination.setText("unused clone folder")
+            window.choose_example()
+            self.assertTrue(window.example_path.is_dir())
+            self.assertEqual(window.source.text(), str(window.example_path))
+            self.assertEqual(window.destination.text(), "")
+        finally:
+            window.process_watch.stop()
+            window.close()
+
     def test_running_status_clears_when_process_exits(self):
         window = MainWindow()
         window.address = "http://127.0.0.1:3000/"

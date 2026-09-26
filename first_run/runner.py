@@ -144,7 +144,7 @@ class SetupRunner:
         if self.cancelled.is_set():
             return Outcome("Blocked", "Run cancelled before setup.")
         if not self.info.launch:
-            return Outcome("Blocked", "No supported launch command was found. Select a project entry point manually in a later version.")
+            return Outcome("Blocked", "No supported launch route was found. See Output for the detected project facts; this version starts common root Python web entries or npm dev/start/serve scripts.")
         if self.info.kind == "node" and (not shutil.which("node") or not shutil.which("npm")):
             return Outcome("Needs input", "Node and npm must be installed on the machine. System runtime installation needs your approval outside First Run.")
         missing = self._environment_values()
