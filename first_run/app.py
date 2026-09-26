@@ -49,10 +49,17 @@ class SourceWorker(QObject):
 class RunReporter(QObject):
     output = Signal(str)
     step = Signal(str)
+    observed = Signal(str)
+    decision = Signal(str, str)
 
     def report(self, line: str):
         if line.startswith("$ "):
             self.step.emit("Running " + line[2:])
+        elif line.startswith("Observed: "):
+            self.observed.emit(line.removeprefix("Observed: "))
+        elif line.startswith("Recovery (") and "): " in line:
+            source, reason = line.removeprefix("Recovery (").split("): ", 1)
+            self.decision.emit(source, reason)
         self.output.emit(line)
 
 
@@ -161,10 +168,17 @@ class MainWindow(QMainWindow):
         self.current = QLabel("Choose a local folder or repository URL.")
         self.plan = QLabel("No plan yet")
         self.plan.setWordWrap(True)
+        self.observation = QLabel("No failure observed.")
+        self.observation.setWordWrap(True)
+        self.recovery = QLabel("No recovery decision yet.")
+        self.recovery.setWordWrap(True)
+        self.decision_source = QLabel("—")
         self.output = QTextEdit()
         self.output.setReadOnly(True)
         self.output.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
         self.reporter.step.connect(self.current.setText)
+        self.reporter.observed.connect(self.observation.setText)
+        self.reporter.decision.connect(self.show_decision)
         self.reporter.output.connect(self.output.append)
 
         layout = QVBoxLayout()
@@ -175,11 +189,20 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.current)
         layout.addWidget(QLabel("Setup plan"))
         layout.addWidget(self.plan)
+        recovery = QFormLayout()
+        recovery.addRow("Observed", self.observation)
+        recovery.addRow("Decision", self.recovery)
+        recovery.addRow("Source", self.decision_source)
+        layout.addLayout(recovery)
         layout.addWidget(QLabel("Output"))
         layout.addWidget(self.output, 1)
         root = QWidget()
         root.setLayout(layout)
         self.setCentralWidget(root)
+
+    def show_decision(self, source: str, reason: str):
+        self.decision_source.setText(source)
+        self.recovery.setText(reason)
 
     def browse_source(self):
         path = QFileDialog.getExistingDirectory(self, "Select project folder")
@@ -248,6 +271,9 @@ class MainWindow(QMainWindow):
         self.state.setText("Opening")
         self.current.setText("Resolving project source…")
         self.plan.setText("Inspecting project…")
+        self.observation.setText("No failure observed.")
+        self.recovery.setText("No recovery decision yet.")
+        self.decision_source.setText("—")
         self.output.clear()
         self.thread = QThread(self)
         self.worker = SourceWorker(self.source.text(), self.destination.text(), self.reporter.report, reuse,
@@ -333,6 +359,10 @@ class MainWindow(QMainWindow):
         stopped = runner.cancelled.is_set() and outcome.state != "Running"
         self.state.setText("Stopped" if stopped else outcome.state)
         self.current.setText(outcome.detail)
+        if outcome.state == "Needs input" and self.observation.text() == "No failure observed.":
+            self.observation.setText(outcome.detail)
+            self.recovery.setText("Continue after addressing the requested input.")
+            self.decision_source.setText("rules")
         self.start.setText("Continue setup" if outcome.state == "Needs input" else "Set up and run")
         self.current.setWordWrap(True)
         self.address = outcome.address

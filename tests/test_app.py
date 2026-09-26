@@ -73,6 +73,18 @@ class WindowTests(unittest.TestCase):
         self.assertIn("HTTP 401", results[-1][1])
         self.assertNotIn("private-test-key", str(results))
 
+    def test_recovery_reason_is_visible_outside_raw_output(self):
+        window = MainWindow()
+        try:
+            window.reporter.report("Observed: port 8000 is in use before launch.")
+            window.reporter.report("Recovery (rules): trying port 8001.")
+            self.assertIn("port 8000", window.observation.text())
+            self.assertEqual(window.decision_source.text(), "rules")
+            self.assertIn("8001", window.recovery.text())
+        finally:
+            window.process_watch.stop()
+            window.close()
+
     def test_running_status_clears_when_process_exits(self):
         window = MainWindow()
         window.address = "http://127.0.0.1:3000/"
