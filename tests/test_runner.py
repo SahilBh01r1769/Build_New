@@ -125,6 +125,15 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("MongoDB", failure_summary(node))
         self.assertIn("NameError", failure_summary(python))
 
+    def test_mongodb_connection_failure_requests_intervention(self):
+        failure = ("Failed to connect to MongoDB: Error: querySrv ECONNREFUSED "
+                   "_mongodb._tcp.cluster0.cojoign.mongodb.net")
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+            decision = decide_failure(failure, [("npm", "run", "start")], {0}, ())
+        self.assertEqual(decision.action, "needs_input")
+        self.assertIn("database URL", decision.reason)
+        self.assertEqual(decision.candidate, -1)
+
     def test_model_cannot_select_unlisted_command(self):
         response = {"output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps({
             "action": "retry_launch", "reason": "try it", "candidate": 99,
@@ -276,6 +285,34 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(outcome.state, "Blocked")
             self.assertIn("source bug needs a code fix", outcome.detail)
             self.assertEqual((path / "broken.js").read_text(), source)
+
+    def test_continue_after_database_intervention_skips_completed_install(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "project"
+            path.mkdir()
+            (path / "package.json").write_text(json.dumps({
+                "name": "service-test", "version": "1.0.0", "scripts": {"start": "node server.js"},
+            }))
+            (path / "server.js").write_text(
+                "if (!require('fs').existsSync('database-ready')) {\n"
+                "  console.error('Failed to connect to MongoDB: Error: connect ECONNREFUSED 127.0.0.1:27017');\n"
+                "  process.exit(1);\n"
+                "}\n"
+                "require('http').createServer((q,r)=>r.end('ready')).listen(3000,'127.0.0.1');\n"
+            )
+            with patch("first_run.history.history_path", return_value=Path(directory) / "history.json"):
+                with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+                    first = SetupRunner(inspect_project(path), lambda _: None, threading.Event())
+                    self.assertEqual(first.run().state, "Needs input")
+                    (path / "database-ready").touch()
+                    logs = []
+                    second = SetupRunner(inspect_project(path), logs.append, threading.Event())
+                    try:
+                        self.assertEqual(second.run(reuse=True).state, "Running")
+                        self.assertTrue(any("installation skipped" in line for line in logs))
+                        self.assertFalse(any(line.startswith("$ npm install") for line in logs))
+                    finally:
+                        second.stop()
 
 
 if __name__ == "__main__":

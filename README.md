@@ -23,7 +23,7 @@ python -m pip install -e .
 first-run
 ```
 
-Enter a folder or an HTTPS Git URL. For a URL, choose a new destination folder. Click **Set up and run**. The plan, observations, commands, and process output appear in the window. When an environment value is missing, open the project folder, fill the named value in `.env`, and click **Continue setup**. **Stop** ends the launched process. After a successful setup, select it under **Recent** and use **Start again** to skip dependency installation and reuse the detected launch route.
+Enter a folder or an HTTPS Git URL. For a URL, choose a new destination folder. Click **Set up and run**. The plan, observations, commands, and process output appear in the window. When an environment value is missing, open the project folder, fill the named value in `.env`, and click **Continue setup**. An unreachable MongoDB connection also produces **Needs input**: check the project's database URL and service, then continue. A completed dependency installation is reused on continuation while its manifest and installed environment still match. **Stop** ends the launched process. After a successful setup, select it under **Recent** and use **Start again** to skip dependency installation and reuse the detected launch route.
 
 For Python projects, First Run creates `.venv` inside the project and installs `requirements.txt`, or installs a `pyproject.toml` project in editable mode. For Node projects, it uses `npm ci` with a lockfile or `npm install` without one. It launches common FastAPI, Flask, Django, and Streamlit root entry points, or an npm `dev`, `start`, or `serve` script. It copies `.env.example` to `.env` when needed and asks for empty values instead of inventing secrets. Treat a project's install and start scripts as code you have chosen to run locally.
 
@@ -45,7 +45,8 @@ These are observed outcomes, not a claim of general compatibility:
 | Small local FastAPI fixture with `requirements.txt` | Created `.venv`, installed dependencies, and reached HTTP 200 on port 8000 (Linux, September 26). This checks the Python path, not compatibility with a public Python repo. |
 | A copy of Mythos with a blank `DEMO_TOKEN` added to `.env.example` | Needs input named the value and file; filling it and continuing reached HTTP 200. This was an intervention check, not a requirement of the original project. |
 | Small Node project with a failing `dev` script and a working `start` script | Retried the detected `start` route and reached HTTP 200 without a model key. |
-| [MDN Express Local Library](https://github.com/mdn/express-locallibrary-tutorial) | Dependencies installed, then startup remained Blocked on an unavailable MongoDB connection (Linux, September 25). |
+| [MDN Express Local Library](https://github.com/mdn/express-locallibrary-tutorial) | Dependencies installed, then startup reported **Needs input** on an unreachable MongoDB connection (Linux, September 26). The database was not supplied, so an end-to-end launch remains unverified. |
+| Bundled Flask example | HTTP 200, Open app, Stop, and Start again worked on Windows (September 26, user check). |
 | [FastAPI example](https://github.com/vahidrezazadeh/fastapi-example) | Blocked on an application `NameError` after setup (Linux, September 25). |
 
 ## Current limits
@@ -55,6 +56,6 @@ These are observed outcomes, not a claim of general compatibility:
 - A runtime, native dependency, external service, or nonempty credential missing from the machine can still require manual setup. First Run does not install system software or edit application source.
 - HTTP checks use common local ports. Printed URLs on other ports need manual inspection; apps requiring a particular health route or login may also need it.
 - Recovery via the model needs a separately supplied API key. The live model call has not been exercised in the development environment.
-- Desktop and process lifecycle checks have run on Linux; Windows behavior still needs a local run.
+- The bundled example and its process controls were checked on Windows; broader Windows project compatibility remains unverified.
 
 Run the focused tests with `python -m unittest discover -s tests -v`.

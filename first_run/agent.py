@@ -31,6 +31,14 @@ def decide_failure(
     observations: tuple[str, ...],
 ) -> Decision:
     """The model selects from known launch routes; it never supplies a command."""
+    # A different launch command cannot fix an unavailable external database.
+    if (re.search(r"MongoDB|MongoServerSelectionError|MongooseServerSelectionError", failure, re.IGNORECASE)
+            and re.search(r"ECONNREFUSED|ENOTFOUND|querySrv|ServerSelectionError|timed out", failure, re.IGNORECASE)):
+        return Decision(
+            "needs_input",
+            "MongoDB could not be reached. Check the project's database URL and make its database available, "
+            "then click Continue setup. First Run will not change the project's connection settings.",
+        )
     available = [i for i in range(len(candidates)) if i not in attempted]
     key = os.environ.get("OPENAI_API_KEY")
     if not available:

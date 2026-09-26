@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 import time
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -29,6 +30,17 @@ class WindowTests(unittest.TestCase):
             self.assertTrue(window.example_path.is_dir())
             self.assertEqual(window.source.text(), str(window.example_path))
             self.assertEqual(window.destination.text(), "")
+        finally:
+            window.process_watch.stop()
+            window.close()
+
+    def test_continue_button_reuses_completed_setup(self):
+        window = MainWindow()
+        try:
+            window.start.setText("Continue setup")
+            with patch.object(window, "open_project") as open_project:
+                window.start.click()
+            open_project.assert_called_once_with(reuse=True)
         finally:
             window.process_watch.stop()
             window.close()

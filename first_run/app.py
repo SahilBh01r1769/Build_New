@@ -100,7 +100,7 @@ class MainWindow(QMainWindow):
         form.addRow("Recent", self.recent)
 
         self.start = QPushButton("Set up and run")
-        self.start.clicked.connect(self.open_project)
+        self.start.clicked.connect(lambda: self.open_project(reuse=self.start.text() == "Continue setup"))
         self.again = QPushButton("Start again")
         self.again.setEnabled(False)
         self.again.clicked.connect(lambda: self.open_project(reuse=True))

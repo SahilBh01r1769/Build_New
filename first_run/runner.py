@@ -15,7 +15,7 @@ from urllib.request import urlopen
 
 from first_run.inspect import ProjectInfo
 from first_run.agent import decide_failure
-from first_run.history import save_project, saved_launch
+from first_run.history import installed_setup, save_install, save_project, saved_launch
 
 
 @dataclass(frozen=True)
@@ -172,16 +172,18 @@ class SetupRunner:
             return Outcome("Blocked", "No supported package manager or launch route was found.")
         routes = self._launch_routes(launch)
         previous = saved_launch(self.info.path) if reuse and not (self.info.kind == "python" and created) else None
-        if previous not in routes:
+        ready = installed_setup(self.info.path, self.info.kind)
+        if previous not in routes or not ready:
             previous = None
-        if previous:
-            self.report("Using saved launch route; dependency installation skipped.")
+        if previous or (reuse and ready):
+            self.report("Using completed setup; dependency installation skipped.")
         else:
             if self.cancelled.is_set():
                 return Outcome("Blocked", "Run cancelled before dependency installation.")
             code, output = self._command(install)
             if code:
                 return Outcome("Blocked", "Dependency installation failed. " + output[-1600:])
+            save_install(self.info.path)
         if self.cancelled.is_set():
             return Outcome("Blocked", "Run cancelled.")
 

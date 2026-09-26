@@ -9,6 +9,10 @@ def history_path() -> Path:
     return Path.home() / ".config" / "first-run" / "projects.json"
 
 
+def installs_path() -> Path:
+    return history_path().with_name("installs.json")
+
+
 def recent() -> list[dict]:
     try:
         data = json.loads(history_path().read_text(encoding="utf-8"))
@@ -28,6 +32,36 @@ def setup_fingerprint(path: Path) -> str:
             digest.update(manifest.read_bytes())
             digest.update(b"\0")
     return digest.hexdigest()
+
+
+def save_install(path: Path):
+    """Record a completed dependency install, even if launch needs user input."""
+    try:
+        data = json.loads(installs_path().read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError):
+        data = {}
+    data[str(path)] = setup_fingerprint(path)
+    target = installs_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(".tmp")
+    temporary.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    temporary.replace(target)
+
+
+def installed_setup(path: Path, kind: str) -> bool:
+    try:
+        data = json.loads(installs_path().read_text(encoding="utf-8"))
+        if kind == "python":
+            present = (path / ".venv").is_dir()
+        else:
+            package = json.loads((path / "package.json").read_text(encoding="utf-8"))
+            has_dependencies = bool(package.get("dependencies") or package.get("devDependencies"))
+            present = not has_dependencies or (path / "node_modules").is_dir()
+        return present and isinstance(data, dict) and data.get(str(path)) == setup_fingerprint(path)
+    except (OSError, ValueError):
+        return False
 
 
 def save_project(path: Path, launch: tuple[str, ...]):
