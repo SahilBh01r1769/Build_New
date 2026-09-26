@@ -75,8 +75,13 @@ def decide_failure(
         text = next(part["text"] for item in payload["output"] if item.get("type") == "message"
                     for part in item.get("content", []) if part.get("type") == "output_text")
         result = json.loads(text)
-        if result["action"] == "retry_launch" and result["candidate"] not in available:
-            raise ValueError("Model selected an unavailable launch candidate")
-        return Decision(result["action"], result["reason"], result["candidate"])
-    except (OSError, ValueError, KeyError, StopIteration) as exc:
+        action, reason, candidate = result["action"], result["reason"], result["candidate"]
+        if (action not in ("retry_launch", "needs_input", "blocked")
+                or not isinstance(reason, str) or not reason.strip()
+                or type(candidate) is not int):
+            raise ValueError("Invalid recovery decision")
+        if (action == "retry_launch" and candidate not in available) or (action != "retry_launch" and candidate != -1):
+            raise ValueError("Invalid recovery candidate")
+        return Decision(action, reason[:400], candidate)
+    except (OSError, ValueError, KeyError, StopIteration, TypeError) as exc:
         return Decision("retry_launch", f"Model decision unavailable ({type(exc).__name__}); trying another detected entry point after: " + failure_summary(failure), available[0])
