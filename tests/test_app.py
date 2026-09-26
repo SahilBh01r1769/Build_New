@@ -37,9 +37,15 @@ class WindowTests(unittest.TestCase):
     def test_recovery_example_selection_needs_no_node(self):
         window = MainWindow()
         try:
+            window.recent.addItem("previous recovery run", "previous recovery run")
+            window.recent.setCurrentIndex(window.recent.count() - 1)
+            window.start.setText("Continue setup")
             window.choose_recovery_example()
             self.assertEqual(window.source.text(), str(window.recovery_example_path))
             self.assertEqual(window.destination.text(), "")
+            self.assertEqual(window.recent.currentIndex(), 0)
+            self.assertFalse(window.again.isEnabled())
+            self.assertEqual(window.start.text(), "Set up and run")
         finally:
             window.process_watch.stop()
             window.close()
@@ -82,6 +88,18 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(results[-1][0], False)
         self.assertIn("HTTP 401", results[-1][1])
         self.assertNotIn("private-test-key", str(results))
+
+    def test_key_check_status_remains_visible_after_output_is_cleared(self):
+        window = MainWindow()
+        try:
+            window.key_check_finished(True, "AI connection works.")
+            window.output.clear()
+            self.assertEqual(window.key_status.text(), "Connected")
+            window.api_key.setText("another-key")
+            self.assertEqual(window.key_status.text(), "Not checked")
+        finally:
+            window.process_watch.stop()
+            window.close()
 
     def test_recovery_reason_is_visible_outside_raw_output(self):
         window = MainWindow()

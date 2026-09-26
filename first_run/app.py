@@ -141,12 +141,15 @@ class MainWindow(QMainWindow):
         self.api_key = QLineEdit()
         self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
         self.api_key.setPlaceholderText("Optional; used only to diagnose a failed setup")
+        self.key_status = QLabel("Not checked")
+        self.api_key.textChanged.connect(lambda _: self.key_status.setText("Not checked"))
         self.check_key_button = QPushButton("Test key")
         self.check_key_button.clicked.connect(self.test_key)
         key_row = QHBoxLayout()
         key_row.addWidget(self.api_key)
         key_row.addWidget(self.check_key_button)
         form.addRow("OpenAI key", key_row)
+        form.addRow("AI connection", self.key_status)
 
         self.start = QPushButton("Set up and run")
         self.start.clicked.connect(lambda: self.open_project(reuse=self.start.text() == "Continue setup"))
@@ -217,10 +220,14 @@ class MainWindow(QMainWindow):
     def choose_example(self):
         self.source.setText(str(self.example_path))
         self.destination.clear()
+        self.recent.setCurrentIndex(0)
+        self.start.setText("Set up and run")
 
     def choose_recovery_example(self):
         self.source.setText(str(self.recovery_example_path))
         self.destination.clear()
+        self.recent.setCurrentIndex(0)
+        self.start.setText("Set up and run")
 
     def choose_recent(self):
         path = self.recent.currentData()
@@ -245,6 +252,7 @@ class MainWindow(QMainWindow):
             self.output.append("Enter an OpenAI API key to test the connection.")
             return
         self.check_key_button.setEnabled(False)
+        self.api_key.setEnabled(False)
         self.output.append("Checking AI connection; no project files or logs are sent…")
         self.key_thread = QThread(self)
         self.key_worker = KeyCheckWorker(key)
@@ -259,9 +267,11 @@ class MainWindow(QMainWindow):
 
     def key_check_finished(self, success: bool, message: str):
         self.output.append(message)
+        self.key_status.setText("Connected" if success else "Check failed; see Output")
 
     def key_thread_finished(self):
         self.check_key_button.setEnabled(True)
+        self.api_key.setEnabled(True)
         self.key_thread = None
         self.key_worker = None
 
