@@ -17,6 +17,28 @@ from first_run.runner import Outcome, SetupRunner
 
 
 class RunnerTests(unittest.TestCase):
+    def test_http_404_is_not_a_verified_running_app(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "project"
+            path.mkdir()
+            (path / "package.json").write_text(json.dumps({
+                "name": "not-found-test", "version": "1.0.0", "scripts": {"start": "node server.js"},
+            }))
+            (path / "server.js").write_text(
+                "require('http').createServer((q,r)=>{r.statusCode=404;r.end('Not Found')})"
+                ".listen(3000,'127.0.0.1')"
+            )
+            with patch("first_run.history.history_path", return_value=Path(directory) / "history.json"):
+                with patch("first_run.runner.STARTUP_TIMEOUT", 3):
+                    runner = SetupRunner(inspect_project(path), lambda _: None, threading.Event())
+                    try:
+                        result = runner.run()
+                    finally:
+                        runner.stop()
+                self.assertEqual(result.state, "Blocked")
+                self.assertIn("HTTP 404", result.detail)
+                self.assertIsNone(saved_launch(path))
+
     def test_existing_local_server_is_not_claimed_as_new_app(self):
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):

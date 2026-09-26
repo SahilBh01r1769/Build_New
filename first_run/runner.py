@@ -19,6 +19,9 @@ from first_run.agent import decide_failure
 from first_run.history import installed_setup, save_install, save_project, saved_launch
 
 
+STARTUP_TIMEOUT = 30
+
+
 @dataclass(frozen=True)
 class Outcome:
     state: str
@@ -294,7 +297,8 @@ class SetupRunner:
 
         self.app_reader = threading.Thread(target=collect, daemon=True)
         self.app_reader.start()
-        deadline = time.monotonic() + 30
+        deadline = time.monotonic() + STARTUP_TIMEOUT
+        rejected: dict[str, int] = {}
         while time.monotonic() < deadline:
             if self.cancelled.is_set():
                 self.stop()
@@ -315,11 +319,11 @@ class SetupRunner:
                 try:
                     with urlopen(url, timeout=0.7) as response:
                         status = response.status
-                    if status < 500 and app.poll() is None:
+                    if 200 <= status < 400 and app.poll() is None:
                         return Outcome("Running", f"HTTP {status} from {url}", url)
+                    rejected[url] = status
                 except HTTPError as exc:
-                    if exc.code < 500 and app.poll() is None:
-                        return Outcome("Running", f"HTTP {exc.code} from {url}", url)
+                    rejected[url] = exc.code
                 except (OSError, URLError):
                     pass
             time.sleep(0.5)
@@ -328,7 +332,12 @@ class SetupRunner:
             self.app_reader.join(timeout=2)
         if app.stdout:
             app.stdout.close()
-        return Outcome("Blocked", "Application did not respond over HTTP within 30 seconds. " + "\n".join(self.output[-15:])[-1200:])
+        if rejected:
+            responses = ", ".join(f"HTTP {status} from {url}" for url, status in rejected.items())
+            return Outcome("Blocked", "Application responded, but no checked route verified usable: " + responses
+                           + ". See Output for startup details.")
+        return Outcome("Blocked", f"Application did not respond over HTTP within {STARTUP_TIMEOUT} seconds. "
+                       + "\n".join(self.output[-15:])[-1200:])
 
     @staticmethod
     def _responds(url: str) -> bool:

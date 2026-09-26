@@ -27,7 +27,7 @@ Enter a folder or an HTTPS Git URL. For a URL, choose a new destination folder. 
 
 For Python projects, First Run creates `.venv` inside the project and installs `requirements.txt`, or installs a `pyproject.toml` project in editable mode. For Node projects, it uses `npm ci` with a lockfile or `npm install` without one. It launches common FastAPI, Flask, Django, and Streamlit root entry points, or an npm `dev`, `start`, or `serve` script. If a Django app reports missing tables and unapplied migrations, First Run can apply migrations to a fresh project-local SQLite database and retry once. It leaves existing or external databases for the user to review. It copies `.env.example` to `.env` when needed and asks for empty values instead of inventing secrets. Treat a project's install and start scripts as code you have chosen to run locally.
 
-The UI stays responsive during installation. A run succeeds only while its process remains alive and a local HTTP endpoint returns a response below status 500. Successful launch details are saved in `~/.config/first-run/projects.json`; they are checked against newly detected routes and dependency manifests before installation is skipped. Project secrets remain in the project environment, outside this repository.
+The UI stays responsive during installation. A run succeeds only while its process remains alive and a checked local HTTP route returns a 2xx or 3xx response. A 404 or server error is not treated as proof that the app works. Successful launch details are saved in `~/.config/first-run/projects.json`; they are checked against newly detected routes and dependency manifests before installation is skipped. Project secrets remain in the project environment, outside this repository.
 
 ## Recovery
 
