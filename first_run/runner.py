@@ -221,6 +221,7 @@ class SetupRunner:
         index = routes.index(previous) if previous else 0
         attempted: set[int] = set()
         migrations_checked = False
+        decisions_left = 6
         # Each route is tried once; the final decision may still explain a blocker.
         for attempt_no in range(min(len(routes), 5)):
             attempted.add(index)
@@ -244,9 +245,24 @@ class SetupRunner:
                      f"Routes tried: {len(attempted)} of {len(routes)}", *self.info.observations)
             observed = observe_failure(result.detail)
             self.report(f"Observed: {observed.category}: {observed.detail}")
-            decision = decide_failure(result.detail, routes, attempted.copy(), facts,
-                                      api_key=self.api_key)
-            self.report(f"Recovery ({decision.source}): {decision.reason}")
+            output = "\n".join(self.output[-100:])
+            failure = result.detail
+            inspected = False
+            while True:
+                if decisions_left == 0:
+                    return Outcome("Blocked", "Recovery decision limit reached.")
+                can_inspect = not inspected and len(output) > len(result.detail) + 400
+                decision = decide_failure(failure, routes, attempted.copy(), facts,
+                                          api_key=self.api_key, can_inspect_output=can_inspect)
+                decisions_left -= 1
+                self.report(f"Recovery ({decision.source}): {decision.reason}")
+                if decision.action != "inspect_output":
+                    break
+                if not can_inspect:
+                    return Outcome("Blocked", "Recovery requested unavailable process output.")
+                inspected = True
+                failure = result.detail + "\nAdditional captured process output:\n" + output[-5000:]
+                self.report("Observed: inspecting more of the captured process output.")
             if decision.action == "needs_input":
                 return Outcome("Needs input", decision.reason)
             if decision.action != "retry_launch":

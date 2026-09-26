@@ -225,6 +225,19 @@ class RunnerTests(unittest.TestCase):
         sent = json.loads(request.call_args.args[0].data)
         self.assertEqual(json.loads(sent["input"])["phase"], "install")
 
+    def test_model_can_request_only_available_captured_output(self):
+        response = {"output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps({
+            "action": "inspect_output", "reason": "Read earlier startup lines", "candidate": -1,
+        })}]}]}
+        with patch("first_run.agent.urlopen") as request:
+            request.return_value.__enter__.return_value = BytesIO(json.dumps(response).encode())
+            allowed = decide_failure("short failure", [], {0}, (), api_key="test-key",
+                                     can_inspect_output=True)
+            denied = decide_failure("short failure", [], {0}, (), api_key="test-key")
+        self.assertEqual(allowed.action, "inspect_output")
+        self.assertEqual(denied.action, "blocked")
+        self.assertEqual(denied.source, "fallback")
+
     def test_transient_install_failure_retries_once_without_model(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "project"
@@ -444,6 +457,33 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(result.state, "Blocked")
             self.assertIn("previously tried", result.detail)
             self.assertEqual(launch.call_count, 1)
+
+    def test_agent_inspects_captured_output_once_then_retries_known_route(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / "package.json").write_text(json.dumps({
+                "scripts": {"dev": "node broken.js", "start": "node server.js"},
+            }))
+            runner = SetupRunner(inspect_project(path), lambda _: None, threading.Event())
+            def launch(_):
+                if not hasattr(launch, "seen"):
+                    launch.seen = True
+                    runner.output = ["earlier diagnostic " * 200, "last failure"]
+                    return Outcome("Blocked", "last failure")
+                return Outcome("Running", "HTTP 200", "http://127.0.0.1:3000/")
+            with patch("first_run.history.history_path", return_value=path / "history.json"):
+                with patch.object(runner, "_command", return_value=(0, "installed")):
+                    with patch.object(runner, "_launch_verify", side_effect=launch) as started:
+                        with patch("first_run.runner.decide_failure", side_effect=[
+                            Decision("inspect_output", "Need earlier lines", source="AI"),
+                            Decision("retry_launch", "Use start script", 1, "AI"),
+                        ]) as decide:
+                            result = runner.run()
+            self.assertEqual(result.state, "Running")
+            self.assertEqual(started.call_count, 2)
+            self.assertTrue(decide.call_args_list[0].kwargs["can_inspect_output"])
+            self.assertFalse(decide.call_args_list[1].kwargs["can_inspect_output"])
+            self.assertIn("earlier diagnostic", decide.call_args_list[1].args[0])
 
     def test_model_selects_known_start_route_after_real_launch_failure(self):
         with TemporaryDirectory() as directory:
