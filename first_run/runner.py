@@ -149,7 +149,7 @@ class SetupRunner:
             return Outcome("Needs input", "Node and npm must be installed on the machine. System runtime installation needs your approval outside First Run.")
         missing = self._environment_values()
         if missing:
-            return Outcome("Needs input", "Fill these values in the project's .env file, then try again: " + ", ".join(missing))
+            return Outcome("Needs input", f"Fill {', '.join(missing)} in {self.info.path / '.env'}, then continue setup.")
         if self.cancelled.is_set():
             return Outcome("Blocked", "Run cancelled before setup.")
 

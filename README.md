@@ -4,6 +4,8 @@ First Run is a desktop tool for getting an unfamiliar Python or Node web project
 
 It is aimed at ordinary small web projects, not arbitrary repositories. **Blocked** and **Needs input** are useful outcomes when the tool cannot safely finish a setup.
 
+![First Run showing a verified Mythos relaunch and the saved route in its output](docs/first-run-running.png)
+
 ## Use it
 
 Python 3.11 or newer, Git (for URLs), and the relevant Python or Node runtime must already be installed.
@@ -16,7 +18,7 @@ python -m pip install -e .
 first-run
 ```
 
-Enter a folder or an HTTPS Git URL. For a URL, choose a new destination folder. Click **Set up and run**. The plan, observations, commands, and process output appear in the window. **Stop** ends the launched process. After a successful setup, select it under **Recent** and use **Start again** to skip dependency installation and reuse the detected launch route.
+Enter a folder or an HTTPS Git URL. For a URL, choose a new destination folder. Click **Set up and run**. The plan, observations, commands, and process output appear in the window. When an environment value is missing, open the project folder, fill the named value in `.env`, and click **Continue setup**. **Stop** ends the launched process. After a successful setup, select it under **Recent** and use **Start again** to skip dependency installation and reuse the detected launch route.
 
 For Python projects, First Run creates `.venv` inside the project and installs `requirements.txt`, or installs a `pyproject.toml` project in editable mode. For Node projects, it uses `npm ci` with a lockfile or `npm install` without one. It launches common FastAPI, Flask, Django, and Streamlit root entry points, or an npm `dev`, `start`, or `serve` script. It copies `.env.example` to `.env` when needed and asks for empty values instead of inventing secrets. Treat a project's install and start scripts as code you have chosen to run locally.
 
@@ -24,9 +26,22 @@ The UI stays responsive during installation. A run succeeds only while its proce
 
 ## Recovery
 
-First Run makes a short list of launch routes from files and package scripts. If the first launch fails, an optional OpenAI decision can select another untried route, identify required user input, or stop with a blocker. The model cannot supply an arbitrary shell command. There is at most one alternative launch attempt in this version.
+First Run makes a short list of launch routes from files and package scripts. If the first launch fails and another detected route exists, it tries one alternative without requiring a model key. An optional OpenAI decision can instead select an untried route, identify required user input, or stop with a blocker. If that decision is unavailable, the tool falls back to the detected alternative. The model cannot supply an arbitrary shell command. There is at most one alternative launch attempt in this version.
 
-Set `OPENAI_API_KEY` in the environment before starting First Run to enable this recovery step. `FIRST_RUN_MODEL` can override the default `gpt-5-mini`. The provider key is removed from the environment passed to Git and project commands. The failure excerpt and detected routes are sent to the model for this decision; review application logs before enabling it for projects containing sensitive output. Normal setup and verification do not need an API key.
+Set `OPENAI_API_KEY` in the environment before starting First Run to enable the optional model decision. `FIRST_RUN_MODEL` can override the default `gpt-5-mini`. The provider key is removed from the environment passed to Git and project commands. The failure excerpt and detected routes are sent to the model for this decision; review application logs before enabling it for projects containing sensitive output. Setup, verification, and the deterministic alternative route do not need an API key.
+
+## Runs checked
+
+These are observed outcomes, not a claim of general compatibility:
+
+| Project | Result |
+| --- | --- |
+| [Mythos](https://github.com/SahilBh01r1769/indo_european_gods), Node with an npm lockfile and `serve` script | HTTP 200 on port 4173; Stop and Start again worked without reinstalling (Linux, September 26). |
+| Small local FastAPI fixture with `requirements.txt` | Created `.venv`, installed dependencies, and reached HTTP 200 on port 8000 (Linux, September 26). This checks the Python path, not compatibility with a public Python repo. |
+| A copy of Mythos with a blank `DEMO_TOKEN` added to `.env.example` | Needs input named the value and file; filling it and continuing reached HTTP 200. This was an intervention check, not a requirement of the original project. |
+| Small Node project with a failing `dev` script and a working `start` script | Retried the detected `start` route and reached HTTP 200 without a model key. |
+| [MDN Express Local Library](https://github.com/mdn/express-locallibrary-tutorial) | Dependencies installed, then startup remained Blocked on an unavailable MongoDB connection (Linux, September 25). |
+| [FastAPI example](https://github.com/vahidrezazadeh/fastapi-example) | Blocked on an application `NameError` after setup (Linux, September 25). |
 
 ## Current limits
 

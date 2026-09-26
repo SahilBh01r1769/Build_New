@@ -33,10 +33,10 @@ def decide_failure(
     """The model selects from known launch routes; it never supplies a command."""
     available = [i for i in range(len(candidates)) if i not in attempted]
     key = os.environ.get("OPENAI_API_KEY")
-    if not available and not key:
+    if not available:
         return Decision("blocked", "No untried launch route remains. " + failure_summary(failure))
     if not key:
-        return Decision("needs_input", "The first launch failed. Set OPENAI_API_KEY to assess another detected route, or inspect the logged failure and run the project manually. " + failure_summary(failure))
+        return Decision("retry_launch", "Trying another detected entry point after: " + failure_summary(failure), available[0])
 
     choices = [{"index": i, "command": list(candidates[i])} for i in available]
     schema = {
@@ -79,4 +79,4 @@ def decide_failure(
             raise ValueError("Model selected an unavailable launch candidate")
         return Decision(result["action"], result["reason"], result["candidate"])
     except (OSError, ValueError, KeyError, StopIteration) as exc:
-        return Decision("blocked", f"Recovery decision unavailable ({type(exc).__name__}). " + failure[-600:])
+        return Decision("retry_launch", f"Model decision unavailable ({type(exc).__name__}); trying another detected entry point after: " + failure_summary(failure), available[0])

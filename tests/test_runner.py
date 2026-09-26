@@ -11,7 +11,6 @@ from unittest.mock import patch
 from io import BytesIO
 
 from first_run.agent import decide_failure, failure_summary
-from first_run.agent import Decision
 from first_run.history import recent, saved_launch
 from first_run.inspect import inspect_project
 from first_run.runner import SetupRunner
@@ -77,6 +76,7 @@ class RunnerTests(unittest.TestCase):
             outcome = SetupRunner(inspect_project(path), lambda _: None, threading.Event()).run()
             self.assertEqual(outcome.state, "Needs input")
             self.assertIn("SERVICE_API_KEY", outcome.detail)
+            self.assertIn(str(path / ".env"), outcome.detail)
             self.assertFalse((path / "node_modules").exists())
 
     def test_cancelled_before_setup_does_not_create_environment(self):
@@ -133,7 +133,8 @@ class RunnerTests(unittest.TestCase):
             with patch("first_run.agent.urlopen") as request:
                 request.return_value.__enter__.return_value = BytesIO(json.dumps(response).encode())
                 decision = decide_failure("Failed", [("npm", "run", "dev"), ("npm", "run", "start")], {0}, ())
-        self.assertEqual(decision.action, "blocked")
+        self.assertEqual(decision.action, "retry_launch")
+        self.assertEqual(decision.candidate, 1)
 
     def test_provider_key_is_not_passed_to_project_commands(self):
         with TemporaryDirectory() as directory:
@@ -177,7 +178,7 @@ class RunnerTests(unittest.TestCase):
                     second.stop()
                 self.assertTrue(any("installation skipped" in line for line in logs))
 
-    def test_failed_start_can_select_detected_dev_route(self):
+    def test_failed_dev_script_retries_detected_start_without_provider_key(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "project"
             path.mkdir()
@@ -188,13 +189,14 @@ class RunnerTests(unittest.TestCase):
             (path / "broken.js").write_text("process.exit(1)")
             (path / "server.js").write_text("require('http').createServer((q,r)=>r.end('ready')).listen(3000,'127.0.0.1')")
             with patch("first_run.history.history_path", return_value=Path(directory) / "history.json"):
-                with patch("first_run.runner.decide_failure", return_value=Decision("retry_launch", "Try the start script", 1)) as decide:
-                    runner = SetupRunner(inspect_project(path), lambda _: None, threading.Event())
+                with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+                    logs = []
+                    runner = SetupRunner(inspect_project(path), logs.append, threading.Event())
                     try:
                         result = runner.run()
                         self.assertEqual(result.state, "Running")
                         self.assertEqual(saved_launch(path), ("npm", "run", "start"))
-                        self.assertEqual(decide.call_args.args[2], {0})
+                        self.assertTrue(any("Trying another detected entry point" in line for line in logs))
                     finally:
                         runner.stop()
 

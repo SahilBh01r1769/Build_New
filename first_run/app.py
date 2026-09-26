@@ -5,7 +5,8 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QThread, QTimer, Signal
+from PySide6.QtCore import QObject, QThread, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QFontDatabase
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QWidget,
@@ -60,6 +61,7 @@ class MainWindow(QMainWindow):
         self.worker = None
         self.process_runner = None
         self.address = None
+        self.project_path = None
         self.reporter = RunReporter(self)
         self.process_watch = QTimer(self)
         self.process_watch.setInterval(500)
@@ -103,17 +105,23 @@ class MainWindow(QMainWindow):
         self.open_button = QPushButton("Open app")
         self.open_button.setEnabled(False)
         self.open_button.clicked.connect(lambda: webbrowser.open(self.address) if self.address else None)
+        self.folder_button = QPushButton("Open project folder")
+        self.folder_button.setEnabled(False)
+        self.folder_button.clicked.connect(self.open_folder)
         actions = QHBoxLayout()
         actions.addWidget(self.start)
         actions.addWidget(self.again)
         actions.addWidget(self.stop_button)
         actions.addWidget(self.open_button)
+        actions.addWidget(self.folder_button)
         self.state = QLabel("Ready")
+        self.state.setStyleSheet("font-size: 18px; font-weight: 600;")
         self.current = QLabel("Choose a local folder or repository URL.")
         self.plan = QLabel("No plan yet")
         self.plan.setWordWrap(True)
         self.output = QTextEdit()
         self.output.setReadOnly(True)
+        self.output.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
         self.reporter.step.connect(self.current.setText)
         self.reporter.output.connect(self.output.append)
 
@@ -149,6 +157,10 @@ class MainWindow(QMainWindow):
             name = Path(self.source.text().rstrip("/")).name.removesuffix(".git") or "project"
             self.destination.setText(str(Path(parent) / name))
 
+    def open_folder(self):
+        if self.project_path:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.project_path)))
+
     def open_project(self, reuse: bool = False):
         if self.process_runner:
             self.process_runner.stop()
@@ -157,7 +169,10 @@ class MainWindow(QMainWindow):
         self.again.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.open_button.setEnabled(False)
+        self.folder_button.setEnabled(False)
         self.address = None
+        self.project_path = None
+        self.start.setText("Set up and run")
         self.state.setText("Opening")
         self.current.setText("Resolving project source…")
         self.plan.setText("Inspecting project…")
@@ -221,10 +236,14 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def source_ready(self, info: ProjectInfo):
+        self.project_path = info.path
+        self.folder_button.setEnabled(True)
         self.state.setText("Setting up" if info.launch else "Blocked")
         self.current.setText(f"{info.framework} · {info.path}")
         if info.launch:
-            steps = ["Create virtual environment"] if info.kind == "python" else []
+            steps = ["Check .env values"] if info.needs_env else []
+            if info.kind == "python":
+                steps.append("Create or reuse .venv")
             steps.extend(["Install dependencies", "Launch application", "Verify HTTP response"])
             self.plan.setText(" → ".join(steps))
             self.output.append(f"Install: {' '.join(info.install)}\nLaunch: {' '.join(info.launch)}")
@@ -237,6 +256,7 @@ class MainWindow(QMainWindow):
         stopped = runner.cancelled.is_set() and outcome.state != "Running"
         self.state.setText("Stopped" if stopped else outcome.state)
         self.current.setText(outcome.detail)
+        self.start.setText("Continue setup" if outcome.state == "Needs input" else "Set up and run")
         self.current.setWordWrap(True)
         self.address = outcome.address
         if outcome.address and not any(self.recent.itemData(i) == str(runner.info.path) for i in range(self.recent.count())):
