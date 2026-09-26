@@ -21,13 +21,12 @@ class SourceWorker(QObject):
     finished = Signal(object, object)
     failed = Signal(str)
     inspected = Signal(object)
-    output = Signal(str)
-    step = Signal(str)
 
-    def __init__(self, source: str, destination: str, reuse: bool = False):
+    def __init__(self, source: str, destination: str, report, reuse: bool = False):
         super().__init__()
         self.source = source
         self.destination = destination
+        self.report = report
         self.reuse = reuse
         self.cancelled = threading.Event()
         self.runner = None
@@ -40,6 +39,11 @@ class SourceWorker(QObject):
             self.finished.emit(self.runner.run(reuse=self.reuse), self.runner)
         except (OSError, ValueError, RuntimeError) as exc:
             self.failed.emit(str(exc))
+
+
+class RunReporter(QObject):
+    output = Signal(str)
+    step = Signal(str)
 
     def report(self, line: str):
         if line.startswith("$ "):
@@ -56,6 +60,7 @@ class MainWindow(QMainWindow):
         self.worker = None
         self.process_runner = None
         self.address = None
+        self.reporter = RunReporter(self)
         self.process_watch = QTimer(self)
         self.process_watch.setInterval(500)
         self.process_watch.timeout.connect(self.check_process)
@@ -109,6 +114,8 @@ class MainWindow(QMainWindow):
         self.plan.setWordWrap(True)
         self.output = QTextEdit()
         self.output.setReadOnly(True)
+        self.reporter.step.connect(self.current.setText)
+        self.reporter.output.connect(self.output.append)
 
         layout = QVBoxLayout()
         layout.addLayout(form)
@@ -156,12 +163,10 @@ class MainWindow(QMainWindow):
         self.plan.setText("Inspecting project…")
         self.output.clear()
         self.thread = QThread(self)
-        self.worker = SourceWorker(self.source.text(), self.destination.text(), reuse)
+        self.worker = SourceWorker(self.source.text(), self.destination.text(), self.reporter.report, reuse)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.inspected.connect(self.source_ready)
-        self.worker.step.connect(self.current.setText)
-        self.worker.output.connect(self.output.append)
         self.worker.finished.connect(self.run_finished)
         self.worker.failed.connect(self.source_failed)
         self.worker.finished.connect(self.thread.quit)
