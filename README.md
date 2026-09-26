@@ -57,7 +57,7 @@ These are observed outcomes, not a claim of general compatibility:
 | Bundled Flask example with an unrelated server on port 5000 | Started on port 5001, verified HTTP 200, then reused the saved port without reinstalling on Start again (Linux, September 26). |
 | [MDN Express Local Library](https://github.com/mdn/express-locallibrary-tutorial) | Dependencies installed, then startup reported **Needs input** on an unreachable MongoDB connection (Linux, September 26). The database was not supplied, so an end-to-end launch remains unverified. |
 | Bundled Flask example | HTTP 200, Open app, Stop, and Start again worked on Windows (September 26, user check). |
-| Bundled Flask recovery fixture | Initial `app.py` CLI launch failed; the rules chose `main.py`, reached HTTP 200 (Linux, September 26). A live AI decision on this fixture has not been tested. |
+| Bundled Flask recovery fixture | Initial `app.py` CLI launch failed; rules selected `main.py` and reached HTTP 200 on Linux. On Windows, a live model response selected that untried route and First Run verified HTTP 200 (September 26, user check). This is a controlled fixture, not evidence of broad AI recovery on external repositories. |
 | [FastAPI example](https://github.com/vahidrezazadeh/fastapi-example) | Blocked on an application `NameError` after setup (Linux, September 25). |
 
 ## Current limits
@@ -66,9 +66,9 @@ These are observed outcomes, not a claim of general compatibility:
 - npm is the supported Node package manager. A pnpm or Yarn lockfile leads to a blocker.
 - A runtime, native dependency, external service, or nonempty credential missing from the machine can still require manual setup. First Run does not install system software or edit application source.
 - HTTP checks use common local ports and a few framework routes. Printed URLs on other ports, apps requiring login, and unusual layouts may still need manual inspection. Alternate-port behavior was checked with Flask; Django and FastAPI variants have focused tests but no comparable real-project run yet.
-- Recovery via the model needs a separately supplied API key. The live model call has not been exercised in the development environment.
+- Recovery via the model needs a separately supplied API key. A live model-assisted route choice was observed on the bundled Windows fixture; model diagnosis on an external failing repository remains unverified.
 - The bundled example and its process controls were checked on Windows; broader Windows project compatibility remains unverified.
 
 The inspection code identifies a component and launch routes. The runner owns installations, processes, port checks, and HTTP verification. The agent module classifies a few failures and selects only allowed recovery actions; the runner validates and executes them. History stores completed installs and successful launch routes. The desktop displays the state and keeps full command output visible.
 
-Run the tests with `python -m unittest discover -s tests -v`. GitHub Actions runs them with Python 3.11, Node 20, and Qt's offscreen mode. The model response tests use mocks; a real API-assisted recovery still needs a key and an observed failure on the user's machine.
+Run the tests with `python -m unittest discover -s tests -v`. GitHub Actions runs them with Python 3.11, Node 20, and Qt's offscreen mode. The automated model tests use mocks. The Windows fixture check above exercised one live API decision; more varied live cases remain to be tested.
