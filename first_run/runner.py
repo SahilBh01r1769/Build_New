@@ -214,7 +214,7 @@ class SetupRunner:
                          f"Install route: {' '.join(self.info.install)}", *self.info.observations)
                 decision = decide_failure(output, [], set(), facts,
                                           phase="install", api_key=self.api_key)
-                self.report(f"Recovery ({decision.source}): {decision.reason}")
+                self.report(f"Recovery ({decision.source}): {decision.action.replace('_', ' ').capitalize()} — {decision.reason}")
                 if decision.action == "needs_input":
                     return Outcome("Needs input", decision.reason)
                 if decision.action != "retry_install":
@@ -271,7 +271,7 @@ class SetupRunner:
                     decisions_remaining=recovery.decisions_left,
                 )
                 recovery.decisions_left -= 1
-                self.report(f"Recovery ({decision.source}): {decision.reason}")
+                self.report(f"Recovery ({decision.source}): {decision.action.replace('_', ' ').capitalize()} — {decision.reason}")
                 if decision.action not in ("inspect_output", "inspect_entry_points"):
                     break
                 if decision.action == "inspect_output" and can_inspect:

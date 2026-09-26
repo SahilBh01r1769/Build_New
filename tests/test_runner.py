@@ -538,6 +538,8 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("inspect_entry_points", second["inspections_used"])
         self.assertTrue(any("main.py: module-level app assignment" in item for item in second["observations"]))
         self.assertTrue(any("Observed: Static entry point hints" in line for line in logs))
+        self.assertTrue(any("Recovery (AI): Inspect entry points —" in line for line in logs))
+        self.assertTrue(any("Recovery (AI): Retry launch —" in line for line in logs))
 
     def test_repeated_entry_inspection_is_rejected_at_execution(self):
         project = Path(__file__).resolve().parents[1] / "examples" / "flask_recovery"
