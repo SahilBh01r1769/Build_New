@@ -113,6 +113,24 @@ class WindowTests(unittest.TestCase):
             window.process_watch.stop()
             window.close()
 
+    def test_recovery_trace_keeps_inspection_and_second_decision_in_order(self):
+        window = MainWindow()
+        try:
+            window.reporter.report("Observed: Flask could not import app.py")
+            window.reporter.report("Recovery (AI): Check entry points")
+            window.reporter.report("Observed: main.py has a module-level app assignment")
+            window.reporter.report("Recovery (AI): Try main.py")
+            trace = window.recovery_trace.toPlainText().splitlines()
+            self.assertEqual(len(trace), 4)
+            self.assertTrue(trace[0].startswith("Observed · Flask"))
+            self.assertEqual(trace[1], "AI · Check entry points")
+            self.assertTrue(trace[2].startswith("Observed · main.py"))
+            self.assertEqual(trace[3], "AI · Try main.py")
+            self.assertIn("main.py", window.observation.text())
+        finally:
+            window.process_watch.stop()
+            window.close()
+
     def test_running_status_clears_when_process_exits(self):
         window = MainWindow()
         window.address = "http://127.0.0.1:3000/"

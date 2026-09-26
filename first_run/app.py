@@ -181,11 +181,16 @@ class MainWindow(QMainWindow):
         self.recovery = QLabel("No recovery decision yet.")
         self.recovery.setWordWrap(True)
         self.decision_source = QLabel("—")
+        self.recovery_steps: list[str] = []
+        self.recovery_trace = QTextEdit()
+        self.recovery_trace.setReadOnly(True)
+        self.recovery_trace.setMaximumHeight(95)
+        self.recovery_trace.setPlaceholderText("Recovery steps appear here when setup needs them.")
         self.output = QTextEdit()
         self.output.setReadOnly(True)
         self.output.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
         self.reporter.step.connect(self.current.setText)
-        self.reporter.observed.connect(self.observation.setText)
+        self.reporter.observed.connect(self.show_observation)
         self.reporter.decision.connect(self.show_decision)
         self.reporter.output.connect(self.output.append)
 
@@ -202,15 +207,26 @@ class MainWindow(QMainWindow):
         recovery.addRow("Decision", self.recovery)
         recovery.addRow("Source", self.decision_source)
         layout.addLayout(recovery)
+        layout.addWidget(QLabel("Recovery steps"))
+        layout.addWidget(self.recovery_trace)
         layout.addWidget(QLabel("Output"))
         layout.addWidget(self.output, 1)
         root = QWidget()
         root.setLayout(layout)
         self.setCentralWidget(root)
 
+    def _record_recovery(self, label: str, detail: str):
+        self.recovery_steps.append(f"{label} · {detail[:180]}")
+        self.recovery_trace.setPlainText("\n".join(self.recovery_steps[-6:]))
+
+    def show_observation(self, detail: str):
+        self.observation.setText(detail)
+        self._record_recovery("Observed", detail)
+
     def show_decision(self, source: str, reason: str):
         self.decision_source.setText(source)
         self.recovery.setText(reason)
+        self._record_recovery(source, reason)
 
     def browse_source(self):
         path = QFileDialog.getExistingDirectory(self, "Select project folder")
@@ -293,6 +309,8 @@ class MainWindow(QMainWindow):
         self.observation.setText("No failure observed.")
         self.recovery.setText("No recovery decision yet.")
         self.decision_source.setText("—")
+        self.recovery_steps.clear()
+        self.recovery_trace.clear()
         self.output.clear()
         self.thread = QThread(self)
         self.worker = SourceWorker(self.source.text(), self.destination.text(), self.reporter.report, reuse,
@@ -375,6 +393,8 @@ class MainWindow(QMainWindow):
 
     def run_finished(self, outcome: Outcome, runner: SetupRunner):
         self.process_runner = runner
+        if self.recovery_steps:
+            self._record_recovery(outcome.state, outcome.detail)
         stopped = runner.cancelled.is_set() and outcome.state != "Running"
         self.state.setText("Stopped" if stopped else outcome.state)
         self.current.setText(outcome.detail)
