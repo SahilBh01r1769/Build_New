@@ -13,7 +13,7 @@ from io import BytesIO
 from first_run.agent import decide_failure, failure_summary
 from first_run.history import recent, saved_launch
 from first_run.inspect import inspect_project
-from first_run.runner import SetupRunner
+from first_run.runner import Outcome, SetupRunner
 
 
 class RunnerTests(unittest.TestCase):
@@ -313,6 +313,26 @@ class RunnerTests(unittest.TestCase):
                         self.assertFalse(any(line.startswith("$ npm install") for line in logs))
                     finally:
                         second.stop()
+
+    def test_django_recovery_only_migrates_fresh_local_sqlite(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / "requirements.txt").write_text("Django==5.1.15\n")
+            (path / "manage.py").write_text("# project entry\n")
+            database = path / "db.sqlite3"
+            runner = SetupRunner(inspect_project(path), lambda _: None, threading.Event())
+            probe = "FIRST_RUN_DB " + json.dumps(["django.db.backends.sqlite3", str(database)])
+            launch = (sys.executable, "manage.py", "runserver")
+            with patch.object(runner, "_command", side_effect=[(0, probe), (0, "migrated")]) as command:
+                with patch.object(runner, "_launch_verify", return_value=Outcome("Running", "HTTP 200")):
+                    self.assertEqual(runner._recover_django_migrations(launch).state, "Running")
+            self.assertEqual(command.call_args_list[1].args[0][1:], ("manage.py", "migrate", "--noinput"))
+
+            database.write_bytes(b"existing database")
+            with patch.object(runner, "_command", return_value=(0, probe)) as command:
+                result = runner._recover_django_migrations(launch)
+            self.assertEqual(result.state, "Needs input")
+            self.assertEqual(command.call_count, 1)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import os
+import json
 from pathlib import Path
 import re
 import shutil
@@ -194,6 +195,14 @@ class SetupRunner:
             if result.state == "Running":
                 save_project(self.info.path, routes[start])
             return result
+        failure_output = "\n".join(self.output).lower()
+        if (self.info.framework == "django" and "unapplied migration" in failure_output
+                and "no such table" in failure_output):
+            recovered = self._recover_django_migrations(launch)
+            if recovered is not None:
+                if recovered.state == "Running":
+                    save_project(self.info.path, launch)
+                return recovered
         decision = decide_failure(result.detail, routes, attempted.copy(), self.info.observations)
         self.report(f"Recovery: {decision.reason}")
         if decision.action == "needs_input":
@@ -205,6 +214,37 @@ class SetupRunner:
         if result.state == "Running":
             save_project(self.info.path, routes[decision.candidate])
         return result
+
+    def _recover_django_migrations(self, launch: tuple[str, ...]) -> Outcome | None:
+        """Migrate only a new SQLite file inside the selected project folder."""
+        probe = (
+            "import json; from django.conf import settings; "
+            "db=settings.DATABASES['default']; "
+            "print('FIRST_RUN_DB '+json.dumps([db['ENGINE'], str(db['NAME'])]))"
+        )
+        code, output = self._command((launch[0], "manage.py", "shell", "-c", probe), 30)
+        match = re.search(r"^FIRST_RUN_DB (\[.*\])$", output, re.MULTILINE)
+        if code or not match:
+            return None
+        try:
+            engine, name = json.loads(match.group(1))
+            database = Path(name).resolve()
+            fresh = (engine == "django.db.backends.sqlite3" and name != ":memory:"
+                     and database.is_relative_to(self.info.path)
+                     and (not database.exists() or database.stat().st_size == 0))
+        except (ValueError, OSError, TypeError):
+            fresh = False
+        if not fresh:
+            return Outcome("Needs input", "Django reports unapplied migrations, but its database is not a fresh "
+                           "project-local SQLite file. Review and apply the project's migrations yourself, "
+                           "then click Continue setup.")
+        self.report("Recovery: applying Django migrations to a fresh local SQLite database.")
+        code, output = self._command((launch[0], "manage.py", "migrate", "--noinput"), 120)
+        if code:
+            return Outcome("Blocked", "Django migrations failed. " + output[-1200:])
+        if self.cancelled.is_set():
+            return Outcome("Blocked", "Run cancelled after migrations.")
+        return self._launch_verify(launch)
 
     def _launch_routes(self, launch: tuple[str, ...]) -> list[tuple[str, ...]]:
         routes = [launch]
