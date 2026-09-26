@@ -14,6 +14,8 @@ Python 3.11 or newer, Git (for URLs), and the relevant Python or Node runtime mu
 
 **Windows:** [Download the ZIP](https://github.com/SahilBh01r1769/Build_New/archive/refs/heads/main.zip), extract it where you want the project to live, and double-click `run-windows.cmd`. The first launch creates `.venv` beside the launcher and installs the desktop dependency; later launches reuse it. The Windows `py` launcher must be available. Click **Try example** then **Set up and run** for a small Flask app that needs no Node installation. After it reports **Running**, try **Open app**, **Stop**, and **Start again**.
 
+**Try recovery** selects a second bundled Flask fixture. Its `app.py` is a plausible but wrong entry point; `main.py` contains the runnable app. First Run should observe the failed guess and try `main.py`. This fixture checks the recovery path, not broad compatibility. With a valid OpenAI API key entered locally, click **Test key** first, then **Try recovery** and **Set up and run**; the decision source tells you whether the model participated. The key is optional and should never be pasted into an issue or chat.
+
 The launcher and its environment stay in the folder you extracted. Python and pip may still use their normal system temporary and cache folders during installation.
 
 **macOS/Linux or manual installation:**
@@ -55,6 +57,7 @@ These are observed outcomes, not a claim of general compatibility:
 | Bundled Flask example with an unrelated server on port 5000 | Started on port 5001, verified HTTP 200, then reused the saved port without reinstalling on Start again (Linux, September 26). |
 | [MDN Express Local Library](https://github.com/mdn/express-locallibrary-tutorial) | Dependencies installed, then startup reported **Needs input** on an unreachable MongoDB connection (Linux, September 26). The database was not supplied, so an end-to-end launch remains unverified. |
 | Bundled Flask example | HTTP 200, Open app, Stop, and Start again worked on Windows (September 26, user check). |
+| Bundled Flask recovery fixture | Initial `app.py` CLI launch failed; the rules chose `main.py`, reached HTTP 200 (Linux, September 26). A live AI decision on this fixture has not been tested. |
 | [FastAPI example](https://github.com/vahidrezazadeh/fastapi-example) | Blocked on an application `NameError` after setup (Linux, September 25). |
 
 ## Current limits

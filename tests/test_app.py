@@ -34,6 +34,16 @@ class WindowTests(unittest.TestCase):
             window.process_watch.stop()
             window.close()
 
+    def test_recovery_example_selection_needs_no_node(self):
+        window = MainWindow()
+        try:
+            window.choose_recovery_example()
+            self.assertEqual(window.source.text(), str(window.recovery_example_path))
+            self.assertEqual(window.destination.text(), "")
+        finally:
+            window.process_watch.stop()
+            window.close()
+
     def test_continue_button_reuses_completed_setup(self):
         window = MainWindow()
         try:

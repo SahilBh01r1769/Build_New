@@ -111,10 +111,15 @@ class MainWindow(QMainWindow):
         source_row.addWidget(self.source)
         source_row.addWidget(browse)
         self.example_path = Path(__file__).resolve().parent.parent / "examples" / "flask_hello"
+        self.recovery_example_path = Path(__file__).resolve().parent.parent / "examples" / "flask_recovery"
         if self.example_path.is_dir():
             example = QPushButton("Try example")
             example.clicked.connect(self.choose_example)
             source_row.addWidget(example)
+        if self.recovery_example_path.is_dir():
+            recovery_example = QPushButton("Try recovery")
+            recovery_example.clicked.connect(self.choose_recovery_example)
+            source_row.addWidget(recovery_example)
 
         self.destination = QLineEdit()
         self.destination.setPlaceholderText("Folder to create when cloning")
@@ -211,6 +216,10 @@ class MainWindow(QMainWindow):
 
     def choose_example(self):
         self.source.setText(str(self.example_path))
+        self.destination.clear()
+
+    def choose_recovery_example(self):
+        self.source.setText(str(self.recovery_example_path))
         self.destination.clear()
 
     def choose_recent(self):

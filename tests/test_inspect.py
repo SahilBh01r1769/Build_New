@@ -15,6 +15,13 @@ class InspectTests(unittest.TestCase):
         self.assertEqual(info.framework, "flask")
         self.assertEqual(info.launch, ("flask", "--app", "app.py", "run", "--host", "127.0.0.1"))
 
+    def test_recovery_example_exposes_two_detected_flask_routes(self):
+        example = Path(__file__).resolve().parents[1] / "examples" / "flask_recovery"
+        info = inspect_project(example)
+        self.assertEqual(info.framework, "flask")
+        self.assertEqual(info.launch[2], "app.py")
+        self.assertTrue((example / "main.py").is_file())
+
     def test_fastapi_requirements_and_entry(self):
         with TemporaryDirectory() as directory:
             path = Path(directory)
