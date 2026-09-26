@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 
 @dataclass(frozen=True)
 class Decision:
-    action: str  # inspect_output, retry_launch, retry_install, needs_input, blocked
+    action: str  # inspect_output, inspect_entry_points, retry_launch, retry_install, needs_input, blocked
     reason: str
     candidate: int = -1
     source: str = "rules"
@@ -77,7 +77,8 @@ def redact_sensitive(value: str) -> str:
 def decide_failure(
     failure: str, candidates: list[tuple[str, ...]], attempted: set[int],
     observations: tuple[str, ...], *, phase: str = "launch", api_key: str | None = None,
-    can_inspect_output: bool = False,
+    can_inspect_output: bool = False, can_inspect_entries: bool = False,
+    inspections_used: tuple[str, ...] = (), decisions_remaining: int = 6,
 ) -> Decision:
     """Choose one allowed action from observed failure evidence, never a model command."""
     if phase not in ("install", "launch"):
@@ -99,6 +100,8 @@ def decide_failure(
         actions.append("retry_install")
     if phase == "launch" and can_inspect_output:
         actions.append("inspect_output")
+    if phase == "launch" and can_inspect_entries:
+        actions.append("inspect_entry_points")
 
     def fallback(reason: str = "", source: str = "rules") -> Decision:
         detail = failure_summary(failure)
@@ -137,6 +140,8 @@ def decide_failure(
                 "A guessed entry point with no application object may warrant an untried detected route. "
                 "inspect_output requests more of the already captured process output before deciding and is "
                 "available only when listed. It cannot run a new command. "
+                "inspect_entry_points checks detected Python entry files without executing them and returns "
+                "static hints about an app object; use it when an entry point is uncertain. "
                 "Use needs_input for a credential, service, or user decision; blocked for source bugs, missing "
                 "system runtimes, or unclear failures. Never invent commands or secrets or request source changes. "
                 "candidate is -1 unless retry_launch. Keep reason short."
@@ -147,6 +152,9 @@ def decide_failure(
                 "failure_category": observe_failure(failure, phase).category,
                 "observations": [redact_sensitive(item) for item in observations],
                 "can_inspect_output": can_inspect_output,
+                "available_inspections": [action for action in actions if action.startswith("inspect_")],
+                "inspections_used": inspections_used,
+                "decisions_remaining": decisions_remaining,
                 "available_launch_candidates": choices,
             }),
             "text": {"format": {"type": "json_schema", "name": "recovery_decision", "strict": True, "schema": schema}},

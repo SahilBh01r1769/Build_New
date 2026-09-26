@@ -506,6 +506,55 @@ class RunnerTests(unittest.TestCase):
             self.assertFalse(decide.call_args_list[1].kwargs["can_inspect_output"])
             self.assertIn("earlier diagnostic", decide.call_args_list[1].args[0])
 
+    def test_model_inspects_entry_points_then_retries_verified_route(self):
+        project = Path(__file__).resolve().parents[1] / "examples" / "flask_recovery"
+        replies = [
+            {"action": "inspect_entry_points", "reason": "Check which file defines app", "candidate": -1},
+            {"action": "retry_launch", "reason": "main.py defines app", "candidate": 1},
+        ]
+        responses = [BytesIO(json.dumps({"output": [{"type": "message", "content": [
+            {"type": "output_text", "text": json.dumps(reply)},
+        ]}]}).encode()) for reply in replies]
+        logs = []
+        runner = SetupRunner(inspect_project(project), logs.append, threading.Event(), api_key="test-key")
+        with TemporaryDirectory() as directory:
+            with patch("first_run.history.history_path", return_value=Path(directory) / "history.json"):
+                with patch.object(runner, "_command", return_value=(0, "installed")):
+                    with patch.object(runner, "_launch_verify", side_effect=[
+                        Outcome("Blocked", "Error: Failed to find Flask application in app.py"),
+                        Outcome("Running", "HTTP 200", "http://127.0.0.1:5000/"),
+                    ]) as launched:
+                        with patch("first_run.agent.urlopen") as request:
+                            request.return_value.__enter__.side_effect = responses
+                            result = runner.run()
+        self.assertEqual(result.state, "Running")
+        self.assertEqual(launched.call_count, 2)
+        self.assertIn("app.py", launched.call_args_list[0].args[0])
+        self.assertIn("main.py", launched.call_args_list[1].args[0])
+        first = json.loads(json.loads(request.call_args_list[0].args[0].data)["input"])
+        second = json.loads(json.loads(request.call_args_list[1].args[0].data)["input"])
+        self.assertIn("inspect_entry_points", first["available_inspections"])
+        self.assertNotIn("inspect_entry_points", second["available_inspections"])
+        self.assertIn("inspect_entry_points", second["inspections_used"])
+        self.assertTrue(any("main.py: module-level app assignment" in item for item in second["observations"]))
+        self.assertTrue(any("Observed: Static entry point hints" in line for line in logs))
+
+    def test_repeated_entry_inspection_is_rejected_at_execution(self):
+        project = Path(__file__).resolve().parents[1] / "examples" / "flask_recovery"
+        runner = SetupRunner(inspect_project(project), lambda _: None, threading.Event())
+        with TemporaryDirectory() as directory:
+            with patch("first_run.history.history_path", return_value=Path(directory) / "history.json"):
+                with patch.object(runner, "_command", return_value=(0, "installed")):
+                    with patch.object(runner, "_launch_verify", return_value=Outcome("Blocked", "failed")) as launched:
+                        with patch("first_run.runner.decide_failure", return_value=Decision(
+                            "inspect_entry_points", "look again", source="AI",
+                        )) as decide:
+                            result = runner.run()
+        self.assertEqual(result.state, "Blocked")
+        self.assertIn("repeated inspection", result.detail)
+        self.assertEqual(decide.call_count, 2)
+        self.assertEqual(launched.call_count, 1)
+
     def test_model_selects_known_start_route_after_real_launch_failure(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "project"

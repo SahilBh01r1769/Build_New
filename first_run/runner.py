@@ -1,5 +1,6 @@
 """Run local setup steps and keep the launched web process alive."""
 
+import ast
 from dataclasses import dataclass
 import os
 import json
@@ -28,6 +29,13 @@ class Outcome:
     state: str
     detail: str
     address: str | None = None
+
+
+@dataclass
+class RecoveryState:
+    attempted: set[int]
+    inspections_used: set[str]
+    decisions_left: int = 6
 
 
 class SetupRunner:
@@ -219,12 +227,11 @@ class SetupRunner:
             return Outcome("Blocked", "Run cancelled.")
 
         index = routes.index(previous) if previous else 0
-        attempted: set[int] = set()
+        recovery = RecoveryState(set(), set())
         migrations_checked = False
-        decisions_left = 6
         # Each route is tried once; the final decision may still explain a blocker.
         for attempt_no in range(min(len(routes), 5)):
-            attempted.add(index)
+            recovery.attempted.add(index)
             result = self._launch_verify(routes[index])
             if result.state == "Running":
                 save_project(self.info.path, self.verified_launch or routes[index])
@@ -242,39 +249,81 @@ class SetupRunner:
                     return recovered
             facts = (f"Detected {self.info.framework} ({self.info.kind})",
                      f"Failed route: {' '.join(routes[index])}",
-                     f"Routes tried: {len(attempted)} of {len(routes)}", *self.info.observations)
+                     f"Routes tried: {len(recovery.attempted)} of {len(routes)}", *self.info.observations)
             observed = observe_failure(result.detail)
             self.report(f"Observed: {observed.category}: {observed.detail}")
             output = "\n".join(self.output[-100:])
             failure = result.detail
-            inspected = False
+            new_observations: list[str] = []
             while True:
-                if decisions_left == 0:
+                if recovery.decisions_left == 0:
                     return Outcome("Blocked", "Recovery decision limit reached.")
-                can_inspect = not inspected and len(output) > len(result.detail) + 400
-                decision = decide_failure(failure, routes, attempted.copy(), facts,
-                                          api_key=self.api_key, can_inspect_output=can_inspect)
-                decisions_left -= 1
+                can_inspect = ("inspect_output" not in recovery.inspections_used
+                               and len(output) > len(result.detail) + 400)
+                can_inspect_entries = ("inspect_entry_points" not in recovery.inspections_used
+                                       and self.info.framework in ("flask", "fastapi")
+                                       and any(i not in recovery.attempted for i in range(len(routes))))
+                decision = decide_failure(
+                    failure, routes, recovery.attempted.copy(), (*facts, *new_observations),
+                    api_key=self.api_key, can_inspect_output=can_inspect,
+                    can_inspect_entries=can_inspect_entries,
+                    inspections_used=tuple(sorted(recovery.inspections_used)),
+                    decisions_remaining=recovery.decisions_left,
+                )
+                recovery.decisions_left -= 1
                 self.report(f"Recovery ({decision.source}): {decision.reason}")
-                if decision.action != "inspect_output":
+                if decision.action not in ("inspect_output", "inspect_entry_points"):
                     break
-                if not can_inspect:
-                    return Outcome("Blocked", "Recovery requested unavailable process output.")
-                inspected = True
-                failure = result.detail + "\nAdditional captured process output:\n" + output[-5000:]
-                self.report("Observed: inspecting more of the captured process output.")
+                if decision.action == "inspect_output" and can_inspect:
+                    recovery.inspections_used.add("inspect_output")
+                    failure = result.detail + "\nAdditional captured process output:\n" + output[-5000:]
+                    self.report("Observed: inspected more of the captured process output.")
+                elif decision.action == "inspect_entry_points" and can_inspect_entries:
+                    recovery.inspections_used.add("inspect_entry_points")
+                    observation = self._entry_point_hints()
+                    new_observations.append(observation)
+                    self.report("Observed: " + observation)
+                else:
+                    return Outcome("Blocked", "Recovery requested an unavailable or repeated inspection.")
             if decision.action == "needs_input":
                 return Outcome("Needs input", decision.reason)
             if decision.action != "retry_launch":
                 return Outcome("Blocked", decision.reason)
             # Validate again at the execution boundary, including mocked or future deciders.
-            if decision.candidate in attempted or not 0 <= decision.candidate < len(routes):
+            if decision.candidate in recovery.attempted or not 0 <= decision.candidate < len(routes):
                 return Outcome("Blocked", "Recovery selected an invalid or previously tried route.")
             if attempt_no == 4:
                 return Outcome("Blocked", "Recovery attempt limit reached; no further route was started.")
             index = decision.candidate
             self.report("Trying another detected entry point after the failed launch.")
         return Outcome("Blocked", "Recovery attempt limit reached; no further route was started.")
+
+    def _entry_point_hints(self) -> str:
+        """Inspect only conventional Python entry files; never import or run source."""
+        hints = []
+        for name in ("app.py", "main.py"):
+            path = self.info.path / name
+            if not path.is_file() or not path.resolve().is_relative_to(self.info.path.resolve()):
+                continue
+            if path.stat().st_size > 65536:
+                hints.append(f"{name}: too large for static inspection")
+                continue
+            try:
+                tree = ast.parse(path.read_text(errors="replace"))
+            except (OSError, SyntaxError, UnicodeError):
+                hints.append(f"{name}: could not parse")
+                continue
+            assigned = any(
+                (isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "app"
+                                                       for target in node.targets))
+                or (isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+                    and node.target.id == "app") for node in tree.body
+            )
+            factory = any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                          and node.name == "create_app" for node in tree.body)
+            label = "module-level app assignment" if assigned else "create_app factory" if factory else "no obvious app object"
+            hints.append(f"{name}: {label}")
+        return "Static entry point hints (not proof of a working app): " + "; ".join(hints)
 
     def _recover_django_migrations(self, launch: tuple[str, ...]) -> Outcome | None:
         """Migrate only a new SQLite file inside the selected project folder."""
