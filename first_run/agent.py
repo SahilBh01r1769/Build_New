@@ -59,6 +59,21 @@ def _transient_install_failure(failure: str) -> bool:
     ))
 
 
+def redact_sensitive(value: str) -> str:
+    """Remove common credentials from project evidence sent to the provider."""
+    value = re.sub(
+        r"(?i)\b((?:API[_-]?KEY|ACCESS[_-]?TOKEN|TOKEN|PASSWORD|PASSWD|SECRET|CLIENT[_-]?SECRET)"
+        r"\s*[:=]\s*)[^\s,;]+",
+        r"\1[redacted]", value,
+    )
+    value = re.sub(r"(?i)(\bAuthorization\s*:\s*Bearer\s+)[^\s,;]+", r"\1[redacted]", value)
+    value = re.sub(
+        r"(?i)\b((?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql)://)[^/@\s]+:[^/@\s]+@",
+        r"\1[redacted]@", value,
+    )
+    return value
+
+
 def decide_failure(
     failure: str, candidates: list[tuple[str, ...]], attempted: set[int],
     observations: tuple[str, ...], *, phase: str = "launch", api_key: str | None = None,
@@ -99,7 +114,7 @@ def decide_failure(
     if not key:
         return fallback()
 
-    choices = [{"index": i, "command": [Path(part).name if os.path.isabs(part) else part
+    choices = [{"index": i, "command": [redact_sensitive(Path(part).name if os.path.isabs(part) else part)
                                        for part in candidates[i]]} for i in available]
     schema = {
         "type": "object", "additionalProperties": False,
@@ -127,9 +142,10 @@ def decide_failure(
                 "candidate is -1 unless retry_launch. Keep reason short."
             ),
             "input": json.dumps({
-                "phase": phase, "failure": failure[-5000:] if not can_inspect_output else failure[-1800:],
+                "phase": phase, "failure": redact_sensitive(
+                    failure[-5000:] if not can_inspect_output else failure[-1800:]),
                 "failure_category": observe_failure(failure, phase).category,
-                "observations": observations,
+                "observations": [redact_sensitive(item) for item in observations],
                 "can_inspect_output": can_inspect_output,
                 "available_launch_candidates": choices,
             }),

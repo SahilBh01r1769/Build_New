@@ -202,6 +202,27 @@ class RunnerTests(unittest.TestCase):
         sent = json.loads(request.call_args.args[0].data)
         self.assertEqual(json.loads(sent["input"])["available_launch_candidates"], [])
 
+    def test_model_request_redacts_credentials_from_failure_and_facts(self):
+        response = {"output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps({
+            "action": "blocked", "reason": "Service unavailable", "candidate": -1,
+        })}]}]}
+        with patch("first_run.agent.urlopen") as request:
+            request.return_value.__enter__.return_value = BytesIO(json.dumps(response).encode())
+            decision = decide_failure(
+                "TOKEN=abc123 Authorization: Bearer token123\n"
+                "postgres://alice:password123@localhost/db failed",
+                [("npm", "run", "start")], {0},
+                ("API_KEY=key123", "mysql://bob:pw456@localhost/db", "SECRET: secret123"),
+                api_key="provider-test-key",
+            )
+        self.assertEqual(decision.source, "AI")
+        sent = json.loads(request.call_args.args[0].data)
+        evidence = sent["input"]
+        for secret in ("abc123", "token123", "password123", "key123", "pw456", "secret123"):
+            self.assertNotIn(secret, evidence)
+        self.assertIn("[redacted]", evidence)
+        self.assertIn("postgres://[redacted]@localhost/db", evidence)
+
     def test_rejected_api_key_is_visible_and_uses_rules(self):
         with patch("first_run.agent.urlopen", side_effect=HTTPError(
             "https://api.openai.com/v1/responses", 401, "Unauthorized", {}, None,
